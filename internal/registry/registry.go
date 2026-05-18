@@ -50,16 +50,48 @@ type PushResult struct {
 // $GRCLI_REGISTRY_PASSWORD / $GRCLI_REGISTRY_USERNAME env pair if set,
 // matching how oras CLI resolves auth.
 func PushRemote(ctx context.Context, registryHost, repository, tag string, in PackInput) (*PushResult, error) {
+	if tag == "" {
+		return nil, errors.New("--tag is required (or derivable from metadata.version)")
+	}
+	repo, err := newRemoteRepo(registryHost, repository)
+	if err != nil {
+		return nil, err
+	}
+
+	desc, bodyDigest, err := pack(ctx, repo, tag, in)
+	if err != nil {
+		return nil, err
+	}
+	return &PushResult{
+		ManifestDigest: desc.Digest.String(),
+		BodyDigest:     bodyDigest,
+		Tag:            tag,
+		Reference:      fmt.Sprintf("%s/%s:%s", registryHost, repository, tag),
+	}, nil
+}
+
+// UnpackRemote pulls a Gemara bundle from <registry>/<repository>:<tag>.
+// Auth uses the same chain as PushRemote.
+func UnpackRemote(ctx context.Context, registryHost, repository, tag string) (*bundle.Bundle, error) {
+	if tag == "" {
+		return nil, errors.New("--tag is required")
+	}
+	repo, err := newRemoteRepo(registryHost, repository)
+	if err != nil {
+		return nil, err
+	}
+	return bundle.Unpack(ctx, repo, tag)
+}
+
+// newRemoteRepo constructs an authenticated oras remote.Repository for
+// the given host + repo path. Shared by PushRemote and UnpackRemote.
+func newRemoteRepo(registryHost, repository string) (*remote.Repository, error) {
 	if registryHost == "" {
 		return nil, errors.New("--registry is required")
 	}
 	if repository == "" {
-		return nil, errors.New("--repository is required (or derivable from metadata.author.id and metadata.id)")
+		return nil, errors.New("--repository is required")
 	}
-	if tag == "" {
-		return nil, errors.New("--tag is required (or derivable from metadata.version)")
-	}
-
 	repo, err := remote.NewRepository(registryHost + "/" + repository)
 	if err != nil {
 		return nil, fmt.Errorf("constructing repository client: %w", err)
@@ -73,17 +105,7 @@ func PushRemote(ctx context.Context, registryHost, repository, tag string, in Pa
 		Cache:      auth.NewCache(),
 		Credential: creds,
 	}
-
-	desc, bodyDigest, err := pack(ctx, repo, tag, in)
-	if err != nil {
-		return nil, err
-	}
-	return &PushResult{
-		ManifestDigest: desc.Digest.String(),
-		BodyDigest:     bodyDigest,
-		Tag:            tag,
-		Reference:      fmt.Sprintf("%s/%s:%s", registryHost, repository, tag),
-	}, nil
+	return repo, nil
 }
 
 // UnpackLocal reads a Gemara bundle from an OCI image layout directory.

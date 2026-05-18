@@ -23,21 +23,27 @@ const flagSource = "source"
 func newUnpackCmd(v *viper.Viper) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "unpack",
-		Short: "Extract a Gemara bundle from a local OCI image layout",
-		Long: `Reads a Gemara bundle from an OCI image layout (the shape produced by
-'grcli publish --dry-run') and writes its artifact files to a directory.
+		Short: "Extract a Gemara bundle from a local OCI layout or remote registry",
+		Long: `Reads a Gemara bundle and writes its artifact files to a directory.
 The bundle manifest, including any SLSA-shaped provenance record, is
 written alongside as bundle.json.
 
-Remote-registry pulls are not yet supported; use 'oras pull' to fetch a
-bundle from a registry into a local layout first.`,
+The source can be a local OCI image layout (--source, the shape produced
+by 'grcli publish --dry-run') or a remote registry (--registry plus
+--repository). Exactly one of --source / --registry must be set.
+
+Registry auth flows through the same Docker credential chain and
+GRCLI_REGISTRY_USERNAME / GRCLI_REGISTRY_PASSWORD / GRCLI_REGISTRY_TOKEN
+overrides as 'grcli publish'.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runUnpack(cmd, v)
 		},
 	}
 
 	flags := cmd.Flags()
-	flags.String(flagSource, "", "OCI image layout directory to read from (required)")
+	flags.String(flagSource, "", "OCI image layout directory (mutually exclusive with --registry)")
+	flags.String(flagRegistry, "", "OCI registry hostname (mutually exclusive with --source)")
+	flags.String(flagRepository, "", "repository path within the registry (requires --registry)")
 	flags.String(flagTag, "", "OCI tag to unpack (required)")
 	flags.String(flagOutput, "grcli-unpacked", "directory to write extracted files to")
 
@@ -52,17 +58,35 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 	ctx := cmd.Context()
 
 	source := v.GetString(flagSource)
+	registryHost := v.GetString(flagRegistry)
+	repository := v.GetString(flagRepository)
 	tag := v.GetString(flagTag)
 	output := v.GetString(flagOutput)
 
-	if source == "" {
-		return errors.New("--source is required")
-	}
 	if tag == "" {
 		return errors.New("--tag is required")
 	}
+	switch {
+	case source == "" && registryHost == "":
+		return errors.New("either --source or --registry is required")
+	case source != "" && registryHost != "":
+		return errors.New("--source and --registry are mutually exclusive")
+	case registryHost != "" && repository == "":
+		return errors.New("--repository is required when --registry is set")
+	}
 
-	unpacked, err := registry.UnpackLocal(ctx, source, tag)
+	var (
+		unpacked *bundle.Bundle
+		refLabel string
+		err      error
+	)
+	if source != "" {
+		unpacked, err = registry.UnpackLocal(ctx, source, tag)
+		refLabel = source
+	} else {
+		unpacked, err = registry.UnpackRemote(ctx, registryHost, repository, tag)
+		refLabel = registryHost + "/" + repository
+	}
 	if err != nil {
 		return err
 	}
@@ -73,7 +97,7 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "unpacked %s:%s → %s (%d files, %d imports)\n",
-		source, tag, output, len(unpacked.Files), len(unpacked.Imports))
+		refLabel, tag, output, len(unpacked.Files), len(unpacked.Imports))
 	return writeBundle(unpacked, output, out)
 }
 

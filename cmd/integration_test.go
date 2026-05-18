@@ -120,6 +120,43 @@ func TestPublishUnpackRoundtrip_MergedControlCatalog(t *testing.T) {
 	require.Equal(t, "control-catalog.yaml", first["name"])
 }
 
+func TestUnpack_FlagValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		wantSub string
+	}{
+		{
+			name:    "no-source-or-registry",
+			args:    []string{"unpack", "--tag", "1.0.0"},
+			wantSub: "either --source or --registry is required",
+		},
+		{
+			name:    "both-source-and-registry",
+			args:    []string{"unpack", "--tag", "1.0.0", "--source", "/tmp/x", "--registry", "registry.example"},
+			wantSub: "mutually exclusive",
+		},
+		{
+			name:    "registry-without-repository",
+			args:    []string{"unpack", "--tag", "1.0.0", "--registry", "registry.example"},
+			wantSub: "--repository is required when --registry is set",
+		},
+		{
+			name:    "missing-tag",
+			args:    []string{"unpack", "--source", "/tmp/x"},
+			wantSub: "--tag is required",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			isolatedWorkdir(t)
+			out, err := runRootExpectErr(t, tc.args...)
+			require.Error(t, err, "expected error, got output: %s", out)
+			require.Contains(t, err.Error(), tc.wantSub)
+		})
+	}
+}
+
 func TestUnpack_MissingTag_Errors(t *testing.T) {
 	workdir := isolatedWorkdir(t)
 	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
