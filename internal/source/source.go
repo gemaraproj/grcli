@@ -6,17 +6,16 @@ package source
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 
 	gemara "github.com/gemaraproj/go-gemara"
 	"github.com/gemaraproj/go-gemara/fetcher"
 	"sigs.k8s.io/yaml"
+
+	"github.com/revanite-io/grcli/internal/digest"
 )
 
 // Loaded is the result of merging the provided input files into a single
@@ -162,24 +161,11 @@ func readYAML(path string, dst any) error {
 func digestAll(paths []string) (map[string]string, error) {
 	digests := make(map[string]string, len(paths))
 	for _, path := range paths {
-		digest, err := sha256File(path)
+		hashed, err := digest.File(path)
 		if err != nil {
 			return nil, fmt.Errorf("digesting %s: %w", path, err)
 		}
-		digests[path] = "sha256:" + digest
+		digests[path] = hashed
 	}
 	return digests, nil
-}
-
-func sha256File(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close() //nolint:errcheck
-	hasher := sha256.New()
-	if _, err := io.Copy(hasher, file); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(hasher.Sum(nil)), nil
 }

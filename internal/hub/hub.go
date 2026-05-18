@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -54,10 +55,10 @@ func New(baseURL, token string) *Client {
 // returns quickly without re-uploading any bytes from this client.
 func (c *Client) Sync(ctx context.Context, repository, tag string) (*SyncResponse, error) {
 	if c.BaseURL == "" {
-		return nil, fmt.Errorf("hub base URL is required")
+		return nil, errors.New("hub base URL is required")
 	}
 	if c.Token == "" {
-		return nil, fmt.Errorf("hub token is required (--token or GRCLI_TOKEN)")
+		return nil, errors.New("hub token is required (--token or GRCLI_TOKEN)")
 	}
 	body, err := json.Marshal(SyncRequest{Repository: repository, Tag: tag})
 	if err != nil {

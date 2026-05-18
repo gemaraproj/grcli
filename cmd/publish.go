@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/revanite-io/grcli/internal/digest"
 	"github.com/revanite-io/grcli/internal/hub"
 	"github.com/revanite-io/grcli/internal/provenance"
 	"github.com/revanite-io/grcli/internal/registry"
@@ -111,7 +112,7 @@ func runPublish(cmd *cobra.Command, v *viper.Viper) error {
 		ArtifactType:   loaded.Type,
 		ArtifactID:     loaded.ID,
 		ArtifactName:   loaded.Filename,
-		ArtifactDigest: registry.SHA256Hex(loaded.Body),
+		ArtifactDigest: digest.Bytes(loaded.Body),
 		SourceFiles:    loaded.SourceDigests,
 		Registry:       target.registryHost,
 		Repository:     target.repository,

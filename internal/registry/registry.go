@@ -8,8 +8,6 @@ package registry
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -22,6 +20,8 @@ import (
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
 	"oras.land/oras-go/v2/registry/remote/retry"
+
+	"github.com/revanite-io/grcli/internal/digest"
 )
 
 // PackInput is the data registry.Pack needs to build the bundle.
@@ -118,7 +118,7 @@ func pack(ctx context.Context, target oras.Target, tag string, in PackInput) (oc
 		return ocispec.Descriptor{}, "", errors.New("artifact filename is empty")
 	}
 
-	bodyDigest := SHA256Hex(in.Body)
+	bodyDigest := digest.Bytes(in.Body)
 
 	manifest := bundle.Manifest{
 		BundleVersion: "1.0",
@@ -183,12 +183,4 @@ func dockerCredentials() (auth.CredentialFunc, error) {
 		}
 		return credentials.Credential(store)(ctx, registry)
 	}, nil
-}
-
-// SHA256Hex returns the sha256 digest of b as "sha256:<hex>". Callers
-// that need to embed the digest in a manifest or provenance record can
-// use the result directly without re-prefixing.
-func SHA256Hex(b []byte) string {
-	sum := sha256.Sum256(b)
-	return "sha256:" + hex.EncodeToString(sum[:])
 }
