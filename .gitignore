@@ -1,0 +1,7 @@
+bin/
+coverage.out
+*.test
+*.out
+grcli-out/
+.grcli.yaml
+.env

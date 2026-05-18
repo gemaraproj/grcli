@@ -1,0 +1,15 @@
+Copyright (c) 2026 Revanite, Inc. All rights reserved.
+
+This software is the proprietary command-line publishing tool for the hosted
+GRC artifact registry operated at grc.store. It is not open-source software.
+No license is granted under this file to copy, modify, distribute, or use this
+software, in source or compiled form, except by current employees and
+contractors of Revanite, Inc. acting in that capacity.
+
+A self-hosting / redistribution license permitting third-party use is planned
+but has not been finalized. Until that license is published, source in this
+repository is provided to authorized recipients for reference only and no
+rights to run, deploy, or sublicense are granted by mere possession.
+
+For commercial inquiries or licensing questions:
+    eknight@revanite.io

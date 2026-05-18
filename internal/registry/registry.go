@@ -1,0 +1,189 @@
+// SPDX-License-Identifier: LicenseRef-Revanite-Proprietary
+
+// Package registry packs a Gemara bundle and writes it to an OCI target.
+// The same Pack call services both the live-push path (remote.Repository)
+// and the dry-run path (oci.Store on disk) — the only difference is
+// which target is passed in.
+package registry
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os"
+
+	"github.com/gemaraproj/go-gemara/bundle"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"oras.land/oras-go/v2"
+	"oras.land/oras-go/v2/content/oci"
+	"oras.land/oras-go/v2/registry/remote"
+	"oras.land/oras-go/v2/registry/remote/auth"
+	"oras.land/oras-go/v2/registry/remote/credentials"
+	"oras.land/oras-go/v2/registry/remote/retry"
+)
+
+// PackInput is the data registry.Pack needs to build the bundle.
+// Body is the merged artifact YAML; Provenance is the SLSA predicate
+// embedded in the OCI config blob under metadata.provenance.
+type PackInput struct {
+	Filename      string
+	ArtifactType  string
+	ArtifactID    string
+	GemaraVersion string
+	Body          []byte
+	Provenance    any // marshaled into bundle.Manifest.Metadata
+}
+
+// PushResult reports what was published.
+type PushResult struct {
+	ManifestDigest string
+	BodyDigest     string
+	Tag            string
+	Reference      string // <registry>/<repository>:<tag>
+}
+
+// PushRemote packs the bundle and pushes it to <registry>/<repository>:<tag>.
+// Auth flows through the default Docker credential chain plus the
+// $GRCLI_REGISTRY_PASSWORD / $GRCLI_REGISTRY_USERNAME env pair if set,
+// matching how oras CLI resolves auth.
+func PushRemote(ctx context.Context, registryHost, repository, tag string, in PackInput) (*PushResult, error) {
+	if registryHost == "" {
+		return nil, fmt.Errorf("--registry is required")
+	}
+	if repository == "" {
+		return nil, fmt.Errorf("--repository is required (or derivable from metadata.author.id and metadata.id)")
+	}
+	if tag == "" {
+		return nil, fmt.Errorf("--tag is required (or derivable from metadata.version)")
+	}
+
+	repo, err := remote.NewRepository(registryHost + "/" + repository)
+	if err != nil {
+		return nil, fmt.Errorf("constructing repository client: %w", err)
+	}
+	creds, err := dockerCredentials()
+	if err != nil {
+		return nil, fmt.Errorf("loading docker credentials: %w", err)
+	}
+	repo.Client = &auth.Client{
+		Client:     retry.DefaultClient,
+		Cache:      auth.NewCache(),
+		Credential: creds,
+	}
+
+	desc, bodyDigest, err := pack(ctx, repo, tag, in)
+	if err != nil {
+		return nil, err
+	}
+	return &PushResult{
+		ManifestDigest: desc.Digest.String(),
+		BodyDigest:     bodyDigest,
+		Tag:            tag,
+		Reference:      fmt.Sprintf("%s/%s:%s", registryHost, repository, tag),
+	}, nil
+}
+
+// PushLocal writes the same bundle to an OCI image layout directory.
+// Used by --dry-run; identical bundle shape, no network.
+func PushLocal(ctx context.Context, dir, tag string, in PackInput) (*PushResult, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating output dir: %w", err)
+	}
+	store, err := oci.New(dir)
+	if err != nil {
+		return nil, fmt.Errorf("opening OCI layout: %w", err)
+	}
+	desc, bodyDigest, err := pack(ctx, store, tag, in)
+	if err != nil {
+		return nil, err
+	}
+	return &PushResult{
+		ManifestDigest: desc.Digest.String(),
+		BodyDigest:     bodyDigest,
+		Tag:            tag,
+		Reference:      fmt.Sprintf("oci:%s:%s", dir, tag),
+	}, nil
+}
+
+// pack is the shared assembly path: build the in-memory Bundle, call
+// bundle.Pack against the target, then tag the resulting manifest.
+func pack(ctx context.Context, target oras.Target, tag string, in PackInput) (ocispec.Descriptor, string, error) {
+	if len(in.Body) == 0 {
+		return ocispec.Descriptor{}, "", fmt.Errorf("artifact body is empty")
+	}
+	if in.Filename == "" {
+		return ocispec.Descriptor{}, "", fmt.Errorf("artifact filename is empty")
+	}
+
+	bodyDigest := sha256Hex(in.Body)
+
+	manifest := bundle.Manifest{
+		BundleVersion: "1.0",
+		GemaraVersion: in.GemaraVersion,
+		Metadata:      map[string]any{},
+		Artifacts: []bundle.Artifact{{
+			Name: in.Filename,
+			Type: in.ArtifactType,
+			ID:   in.ArtifactID,
+			Role: "artifact",
+		}},
+	}
+	if in.Provenance != nil {
+		manifest.Metadata["provenance"] = in.Provenance
+	}
+
+	b := &bundle.Bundle{
+		Manifest: manifest,
+		Files: []bundle.File{{
+			Name: in.Filename,
+			Type: in.ArtifactType,
+			Data: in.Body,
+		}},
+	}
+
+	desc, err := bundle.Pack(ctx, target, b)
+	if err != nil {
+		return ocispec.Descriptor{}, "", fmt.Errorf("packing bundle: %w", err)
+	}
+	if err := target.Tag(ctx, desc, tag); err != nil {
+		return ocispec.Descriptor{}, "", fmt.Errorf("tagging %s: %w", tag, err)
+	}
+	return desc, "sha256:" + bodyDigest, nil
+}
+
+func dockerCredentials() (auth.CredentialFunc, error) {
+	// NewStoreFromDocker reads ~/.docker/config.json and any helpers,
+	// which is the same chain `docker login` writes to. CI runners
+	// that have already done `docker login` get auth for free.
+	store, err := credentials.NewStoreFromDocker(credentials.StoreOptions{})
+	if err != nil {
+		return nil, err
+	}
+	envCreds := func(_ context.Context, registry string) (auth.Credential, error) {
+		// Per-registry env pair: GRCLI_REGISTRY_USERNAME + GRCLI_REGISTRY_PASSWORD
+		// is the simplest CI override that doesn't require docker login.
+		u := os.Getenv("GRCLI_REGISTRY_USERNAME")
+		p := os.Getenv("GRCLI_REGISTRY_PASSWORD")
+		if u != "" && p != "" {
+			return auth.Credential{Username: u, Password: p}, nil
+		}
+		// Bearer token via GRCLI_REGISTRY_TOKEN — for registries that
+		// take a raw bearer (e.g. some zot deployments).
+		if t := os.Getenv("GRCLI_REGISTRY_TOKEN"); t != "" {
+			return auth.Credential{AccessToken: t}, nil
+		}
+		return auth.EmptyCredential, nil
+	}
+	return func(ctx context.Context, registry string) (auth.Credential, error) {
+		if c, err := envCreds(ctx, registry); err == nil && c != (auth.EmptyCredential) {
+			return c, nil
+		}
+		return credentials.Credential(store)(ctx, registry)
+	}, nil
+}
+
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
