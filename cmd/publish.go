@@ -67,9 +67,11 @@ instead of touching any network.`,
 	flags.Bool(flagNoSign, false, "skip cosign signing even when material is available")
 	flags.String(flagCosignKey, "", "cosign key file for local signing (or COSIGN_KEY)")
 
-	// Bind every flag in one call so env (GRCLI_*) and config-file
-	// resolution work uniformly without a hand-maintained name list.
-	_ = v.BindPFlags(flags)
+	// Flags are bound to viper inside RunE (see runPublish) rather than
+	// here at construction time. Two subcommands sharing a viper instance
+	// (e.g. publish + unpack both defining --output) would otherwise
+	// clobber each other's bindings — viper keys are global per instance.
+	//
 	// COSIGN_KEY is the conventional env name for the cosign key path;
 	// override the GRCLI_ prefix so existing cosign users see it picked up.
 	_ = v.BindEnv(flagCosignKey, "COSIGN_KEY")
@@ -88,6 +90,9 @@ type publishTarget struct {
 }
 
 func runPublish(cmd *cobra.Command, v *viper.Viper) error {
+	if err := v.BindPFlags(cmd.Flags()); err != nil {
+		return fmt.Errorf("binding flags: %w", err)
+	}
 	ctx := cmd.Context()
 	startedOn := time.Now().UTC()
 

@@ -50,6 +50,7 @@ func newRootCmd() *cobra.Command {
 		"config file (default: ./.grcli.yaml, $XDG_CONFIG_HOME/grcli/config.yaml, $HOME/.grcli.yaml)")
 
 	cmd.AddCommand(newPublishCmd(v))
+	cmd.AddCommand(newUnpackCmd(v))
 	return cmd
 }
 

@@ -86,6 +86,22 @@ func PushRemote(ctx context.Context, registryHost, repository, tag string, in Pa
 	}, nil
 }
 
+// UnpackLocal reads a Gemara bundle from an OCI image layout directory.
+// It is the inverse of PushLocal: the same dir + tag round-trips the bundle.
+func UnpackLocal(ctx context.Context, dir, tag string) (*bundle.Bundle, error) {
+	if dir == "" {
+		return nil, errors.New("source directory is required")
+	}
+	if tag == "" {
+		return nil, errors.New("tag is required")
+	}
+	store, err := oci.New(dir)
+	if err != nil {
+		return nil, fmt.Errorf("opening OCI layout: %w", err)
+	}
+	return bundle.Unpack(ctx, store, tag)
+}
+
 // PushLocal writes the same bundle to an OCI image layout directory.
 // Used by --dry-run; identical bundle shape, no network.
 func PushLocal(ctx context.Context, dir, tag string, in PackInput) (*PushResult, error) {
