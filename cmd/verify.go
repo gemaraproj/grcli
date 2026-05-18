@@ -40,9 +40,23 @@ https://github.com/<org>/<repo>/.github/workflows/publish.yml@refs/heads/main,
 and the issuer is https://token.actions.githubusercontent.com.
 
 The verification policy a publisher should register with grc.store is
-exactly this pair: a public key, or an (identity, issuer) tuple.
+exactly this pair: a public key, or an (identity, issuer) tuple. (The
+grc.store registration UI for this is not yet shipped; for now, share
+the policy out-of-band with anyone who needs to verify your bundles.)
 
-Requires 'cosign' on PATH.`,
+Requires 'cosign' on PATH.
+
+Examples:
+  # Key-based
+  grcli verify --registry registry.grc.store \
+    --repository myorg/my-controls --tag 1.0.0 \
+    --cosign-key /keys/cosign.pub
+
+  # Keyless (GitHub Actions OIDC)
+  grcli verify --registry registry.grc.store \
+    --repository myorg/my-controls --tag 1.0.0 \
+    --certificate-identity   https://github.com/myorg/my-controls/.github/workflows/publish.yml@refs/heads/main \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runVerify(cmd, v)
 		},

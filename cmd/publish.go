@@ -58,7 +58,7 @@ instead of touching any network.`,
 	flags := cmd.Flags()
 	flags.StringSliceP(flagFile, "f", nil, "input file(s) describing one artifact (repeatable; comma-separated also accepted)")
 	flags.String(flagRegistry, "", "OCI registry hostname, e.g. registry.grc.store")
-	flags.String(flagRepository, "", "repository path within the registry (default: <author.id>/<metadata.id>)")
+	flags.String(flagRepository, "", "repository path within the registry (default: <author.id>/<metadata.id>, slugified to [a-z0-9._-])")
 	flags.String(flagTag, "", "OCI tag (default: metadata.version)")
 	flags.String(flagHubURL, "", "grc.store hub base URL, e.g. https://grc.store")
 	flags.String(flagToken, "", "bearer token for the hub sync call (or GRCLI_TOKEN)")

@@ -30,10 +30,15 @@ and runs 'cue vet -d \"#<Type>\" <spec-dir> <file>' to validate the file
 against the Gemara CUE schemas.
 
 The spec directory must be a local checkout of the Gemara CUE module
-(github.com/gemaraproj/gemara). Provide it via --spec or the
-GRCLI_GEMARA_SPEC_DIR environment variable.
+(https://github.com/gemaraproj/gemara). Provide it via --spec or the
+GRCLI_GEMARA_SPEC_DIR environment variable. For reproducible validation,
+check out the tag matching your artifact's metadata.gemara-version.
 
-Requires the 'cue' binary on PATH (see https://cuelang.org).`,
+Requires the 'cue' binary on PATH (see https://cuelang.org).
+
+Example:
+  git clone --branch v1.0.0 https://github.com/gemaraproj/gemara /tmp/gemara
+  grcli validate -f controls.yaml --spec /tmp/gemara`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runValidate(cmd, v)
 		},

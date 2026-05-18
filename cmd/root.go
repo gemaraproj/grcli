@@ -34,7 +34,7 @@ func newRootCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:           "grcli",
-		Short:         "Publish Gemara artifact bundles to grc.store",
+		Short:         "Validate, publish, unpack, and verify Gemara artifact bundles against grc.store",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       version,

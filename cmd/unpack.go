@@ -34,7 +34,15 @@ by 'grcli publish --dry-run') or a remote registry (--registry plus
 
 Registry auth flows through the same Docker credential chain and
 GRCLI_REGISTRY_USERNAME / GRCLI_REGISTRY_PASSWORD / GRCLI_REGISTRY_TOKEN
-overrides as 'grcli publish'.`,
+overrides as 'grcli publish'.
+
+Examples:
+  # From a local 'publish --dry-run' output
+  grcli unpack --source ./grcli-out --tag 1.0.0
+
+  # From a remote registry
+  grcli unpack --registry registry.grc.store \
+    --repository myorg/my-controls --tag 1.0.0`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runUnpack(cmd, v)
 		},
