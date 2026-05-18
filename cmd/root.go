@@ -38,6 +38,10 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       version,
+		// Cobra does NOT chain PersistentPreRunE: if a subcommand defines
+		// its own, this one is silently skipped. If you add a subcommand
+		// with its own PersistentPreRunE, call loadConfig from there too
+		// (or refactor to a withConfig wrapper around RunE).
 		PersistentPreRunE: func(*cobra.Command, []string) error {
 			return loadConfig(v, cfgFile)
 		},

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -87,9 +88,6 @@ type publishTarget struct {
 
 func runPublish(cmd *cobra.Command, v *viper.Viper) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	startedOn := time.Now().UTC()
 
 	files := expandCommas(v.GetStringSlice(flagFile))
@@ -129,8 +127,7 @@ func runPublish(cmd *cobra.Command, v *viper.Viper) error {
 		Provenance:    predicate,
 	}
 
-	out := cmd.OutOrStdout()
-	result, err := pushBundle(ctx, target, packInput, out, loaded.Type, loaded.ID)
+	result, err := pushBundle(ctx, target, packInput, cmd.OutOrStdout(), loaded.Type, loaded.ID)
 	if err != nil {
 		return err
 	}
@@ -138,7 +135,7 @@ func runPublish(cmd *cobra.Command, v *viper.Viper) error {
 		return nil
 	}
 
-	return signAndNotify(ctx, v, target.repository, target.tag, result.Reference, out)
+	return signAndNotify(ctx, v, target.repository, target.tag, result.Reference)
 }
 
 // resolveTarget merges --tag/--repository/--registry/--dry-run with the
@@ -187,10 +184,12 @@ func pushBundle(ctx context.Context, target publishTarget, in registry.PackInput
 	return result, nil
 }
 
-// signAndNotify runs the optional cosign step and the hub sync call,
-// reporting each outcome to out. Either step can be skipped via flags
-// without producing an error.
-func signAndNotify(ctx context.Context, v *viper.Viper, repository, tag, reference string, out io.Writer) error {
+// signAndNotify runs the optional cosign step and the hub sync call.
+// Status lines go to os.Stdout rather than a passed-in writer because
+// the cosign subprocess inside sign.Sign writes to os.Stdout/os.Stderr
+// directly; routing grcli's own status lines through a different writer
+// would create a misleading "I control the output" contract.
+func signAndNotify(ctx context.Context, v *viper.Viper, repository, tag, reference string) error {
 	signResult, err := sign.Sign(ctx, sign.Options{
 		Disabled:  v.GetBool(flagNoSign),
 		KeyPath:   v.GetString(flagCosignKey),
@@ -200,21 +199,21 @@ func signAndNotify(ctx context.Context, v *viper.Viper, repository, tag, referen
 		return fmt.Errorf("sign: %w", err)
 	}
 	if signResult.Mode == sign.ModeSkipped {
-		fmt.Fprintf(out, "signing skipped: %s\n", signResult.Reason)
+		fmt.Fprintf(os.Stdout, "signing skipped: %s\n", signResult.Reason)
 	} else {
-		fmt.Fprintf(out, "signed (%s)\n", signResult.Mode)
+		fmt.Fprintf(os.Stdout, "signed (%s)\n", signResult.Mode)
 	}
 
 	hubURL := v.GetString(flagHubURL)
 	if hubURL == "" {
-		fmt.Fprintln(out, "skipping hub sync: --hub-url not set")
+		fmt.Fprintln(os.Stdout, "skipping hub sync: --hub-url not set")
 		return nil
 	}
 	syncResp, err := hub.New(hubURL, v.GetString(flagToken)).Sync(ctx, repository, tag)
 	if err != nil {
 		return fmt.Errorf("hub sync: %w", err)
 	}
-	fmt.Fprintf(out,
+	fmt.Fprintf(os.Stdout,
 		"hub indexed %s:%s — %d artifacts (%d new), types=%s\n",
 		syncResp.Repository, syncResp.Tag,
 		syncResp.ArtifactCount, syncResp.NewCount,
