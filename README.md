@@ -1,5 +1,9 @@
 # grcli
 
+> [!WARNING]
+>
+> This repo is a work in progress
+
 A small command-line tool that prepares a Gemara artifact bundle (with provenance
 metadata, optional cosign signature) and publishes it to the GRC artifact
 registry at [grc.store](https://grc.store).
