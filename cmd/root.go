@@ -17,50 +17,68 @@ import (
 // version is overwritten at build time via -ldflags.
 var version = "dev"
 
-var (
-	cfgFile string
-	rootCmd = &cobra.Command{
+// Execute is the package entry point called by main(). It builds a fresh
+// command tree and viper instance for each invocation, which keeps tests
+// from leaking state through package-level singletons.
+func Execute() error {
+	return newRootCmd().Execute()
+}
+
+// newRootCmd assembles the root command and the viper instance shared
+// with its subcommands. The viper instance is populated by the root's
+// PersistentPreRunE so subcommands see config + env values before their
+// RunE fires.
+func newRootCmd() *cobra.Command {
+	v := viper.New()
+	var cfgFile string
+
+	cmd := &cobra.Command{
 		Use:           "grcli",
 		Short:         "Publish Gemara artifact bundles to grc.store",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       version,
+		PersistentPreRunE: func(*cobra.Command, []string) error {
+			return loadConfig(v, cfgFile)
+		},
 	}
-)
-
-// Execute is the package entry point called by main().
-func Execute() error {
-	return rootCmd.Execute()
-}
-
-func init() {
-	cobra.OnInitialize(initConfig)
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "",
+	cmd.PersistentFlags().StringVar(&cfgFile, "config", "",
 		"config file (default: ./.grcli.yaml, $XDG_CONFIG_HOME/grcli/config.yaml, $HOME/.grcli.yaml)")
-	rootCmd.AddCommand(newPublishCmd())
+
+	cmd.AddCommand(newPublishCmd(v))
+	return cmd
 }
 
-func initConfig() {
+// loadConfig points viper at the right config file paths, wires up the
+// GRCLI_* env prefix, and reads the config file if one is present.
+// A missing default config file is not an error; any other read error
+// is surfaced as a warning so the command can still run on env + flags.
+func loadConfig(v *viper.Viper, cfgFile string) error {
 	if cfgFile != "" {
-		viper.SetConfigFile(cfgFile)
+		v.SetConfigFile(cfgFile)
 	} else {
-		viper.SetConfigName(".grcli")
-		viper.SetConfigType("yaml")
-		viper.AddConfigPath(".")
+		v.SetConfigName(".grcli")
+		v.SetConfigType("yaml")
+		v.AddConfigPath(".")
 		if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-			viper.AddConfigPath(filepath.Join(xdg, "grcli"))
+			v.AddConfigPath(filepath.Join(xdg, "grcli"))
 		}
 		if home, err := os.UserHomeDir(); err == nil {
-			viper.AddConfigPath(home)
+			v.AddConfigPath(home)
 		}
 	}
-	viper.SetEnvPrefix("GRCLI")
-	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
-	viper.AutomaticEnv()
-	if err := viper.ReadInConfig(); err != nil {
-		var notFound viper.ConfigFileNotFoundError
-		if !errors.As(err, &notFound) {
-			fmt.Fprintln(os.Stderr, "grcli: warning: reading config:", err)
-		}
+	v.SetEnvPrefix("GRCLI")
+	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
+	v.AutomaticEnv()
+
+	err := v.ReadInConfig()
+	if err == nil {
+		return nil
 	}
+	var notFound viper.ConfigFileNotFoundError
+	if errors.As(err, &notFound) {
+		return nil
+	}
+	fmt.Fprintln(os.Stderr, "grcli: warning: reading config:", err)
+	return nil
 }

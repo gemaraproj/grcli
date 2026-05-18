@@ -45,11 +45,11 @@ type Options struct {
 //
 // Decision tree:
 //
-//   --no-sign           → ModeSkipped, no error
-//   cosign not on PATH  → ModeSkipped, no error  (with a reason)
-//   GITHUB_ACTIONS=true → ModeKeyless via OIDC
-//   KeyPath != ""       → ModeKey
-//   otherwise           → ModeSkipped, no error  (with a reason)
+//	--no-sign           → ModeSkipped, no error
+//	cosign not on PATH  → ModeSkipped, no error  (with a reason)
+//	GITHUB_ACTIONS=true → ModeKeyless via OIDC
+//	KeyPath != ""       → ModeKey
+//	otherwise           → ModeSkipped, no error  (with a reason)
 //
 // Signing failure (cosign returns nonzero) is an error — once we've
 // decided to sign, the caller almost certainly wants to know it broke.

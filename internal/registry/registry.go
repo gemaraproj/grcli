@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 
@@ -25,7 +26,8 @@ import (
 
 // PackInput is the data registry.Pack needs to build the bundle.
 // Body is the merged artifact YAML; Provenance is the SLSA predicate
-// embedded in the OCI config blob under metadata.provenance.
+// (typically a provenance.Predicate) embedded in the OCI config blob
+// under metadata.provenance.
 type PackInput struct {
 	Filename      string
 	ArtifactType  string
@@ -49,13 +51,13 @@ type PushResult struct {
 // matching how oras CLI resolves auth.
 func PushRemote(ctx context.Context, registryHost, repository, tag string, in PackInput) (*PushResult, error) {
 	if registryHost == "" {
-		return nil, fmt.Errorf("--registry is required")
+		return nil, errors.New("--registry is required")
 	}
 	if repository == "" {
-		return nil, fmt.Errorf("--repository is required (or derivable from metadata.author.id and metadata.id)")
+		return nil, errors.New("--repository is required (or derivable from metadata.author.id and metadata.id)")
 	}
 	if tag == "" {
-		return nil, fmt.Errorf("--tag is required (or derivable from metadata.version)")
+		return nil, errors.New("--tag is required (or derivable from metadata.version)")
 	}
 
 	repo, err := remote.NewRepository(registryHost + "/" + repository)
@@ -110,13 +112,13 @@ func PushLocal(ctx context.Context, dir, tag string, in PackInput) (*PushResult,
 // bundle.Pack against the target, then tag the resulting manifest.
 func pack(ctx context.Context, target oras.Target, tag string, in PackInput) (ocispec.Descriptor, string, error) {
 	if len(in.Body) == 0 {
-		return ocispec.Descriptor{}, "", fmt.Errorf("artifact body is empty")
+		return ocispec.Descriptor{}, "", errors.New("artifact body is empty")
 	}
 	if in.Filename == "" {
-		return ocispec.Descriptor{}, "", fmt.Errorf("artifact filename is empty")
+		return ocispec.Descriptor{}, "", errors.New("artifact filename is empty")
 	}
 
-	bodyDigest := sha256Hex(in.Body)
+	bodyDigest := SHA256Hex(in.Body)
 
 	manifest := bundle.Manifest{
 		BundleVersion: "1.0",
@@ -149,7 +151,7 @@ func pack(ctx context.Context, target oras.Target, tag string, in PackInput) (oc
 	if err := target.Tag(ctx, desc, tag); err != nil {
 		return ocispec.Descriptor{}, "", fmt.Errorf("tagging %s: %w", tag, err)
 	}
-	return desc, "sha256:" + bodyDigest, nil
+	return desc, bodyDigest, nil
 }
 
 func dockerCredentials() (auth.CredentialFunc, error) {
@@ -160,7 +162,7 @@ func dockerCredentials() (auth.CredentialFunc, error) {
 	if err != nil {
 		return nil, err
 	}
-	envCreds := func(_ context.Context, registry string) (auth.Credential, error) {
+	envCreds := func(_ context.Context, _ string) (auth.Credential, error) {
 		// Per-registry env pair: GRCLI_REGISTRY_USERNAME + GRCLI_REGISTRY_PASSWORD
 		// is the simplest CI override that doesn't require docker login.
 		u := os.Getenv("GRCLI_REGISTRY_USERNAME")
@@ -183,7 +185,10 @@ func dockerCredentials() (auth.CredentialFunc, error) {
 	}, nil
 }
 
-func sha256Hex(b []byte) string {
+// SHA256Hex returns the sha256 digest of b as "sha256:<hex>". Callers
+// that need to embed the digest in a manifest or provenance record can
+// use the result directly without re-prefixing.
+func SHA256Hex(b []byte) string {
 	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
+	return "sha256:" + hex.EncodeToString(sum[:])
 }

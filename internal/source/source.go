@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -40,6 +41,21 @@ type Loaded struct {
 	SourceDigests map[string]string
 }
 
+// peekedMetadata is the minimal projection of metadata.* fields the loader
+// needs before deciding whether to merge or pass through. sigs.k8s.io/yaml
+// decodes via JSON, so only json tags are needed.
+type peekedMetadata struct {
+	Metadata struct {
+		ID            string `json:"id"`
+		Type          string `json:"type"`
+		Version       string `json:"version"`
+		GemaraVersion string `json:"gemara-version"`
+		Author        struct {
+			ID string `json:"id"`
+		} `json:"author"`
+	} `json:"metadata"`
+}
+
 // Load reads sources, ensures they describe one artifact (matching type
 // + id), and returns the bytes that will be packed into the bundle.
 //
@@ -48,7 +64,7 @@ type Loaded struct {
 // allowed — the file passes through unchanged.
 func Load(ctx context.Context, sources []string) (*Loaded, error) {
 	if len(sources) == 0 {
-		return nil, fmt.Errorf("no source files provided")
+		return nil, errors.New("no source files provided")
 	}
 
 	digests, err := digestAll(sources)
@@ -56,19 +72,7 @@ func Load(ctx context.Context, sources []string) (*Loaded, error) {
 		return nil, err
 	}
 
-	type peek struct {
-		Metadata struct {
-			ID            string `json:"id"            yaml:"id"`
-			Type          string `json:"type"          yaml:"type"`
-			Version       string `json:"version"       yaml:"version"`
-			GemaraVersion string `json:"gemara-version" yaml:"gemara-version"`
-			Author        struct {
-				ID string `json:"id" yaml:"id"`
-			} `json:"author" yaml:"author"`
-		} `json:"metadata" yaml:"metadata"`
-	}
-
-	first := peek{}
+	var first peekedMetadata
 	if err := readYAML(sources[0], &first); err != nil {
 		return nil, fmt.Errorf("reading %s: %w", sources[0], err)
 	}
@@ -76,18 +80,18 @@ func Load(ctx context.Context, sources []string) (*Loaded, error) {
 		return nil, fmt.Errorf("%s: metadata.type and metadata.id are required", sources[0])
 	}
 
-	for _, s := range sources[1:] {
-		next := peek{}
-		if err := readYAML(s, &next); err != nil {
-			return nil, fmt.Errorf("reading %s: %w", s, err)
+	for _, path := range sources[1:] {
+		var next peekedMetadata
+		if err := readYAML(path, &next); err != nil {
+			return nil, fmt.Errorf("reading %s: %w", path, err)
 		}
 		if next.Metadata.Type != first.Metadata.Type {
 			return nil, fmt.Errorf("%s declares type %q but %s declares %q — all inputs must describe one artifact",
-				s, next.Metadata.Type, sources[0], first.Metadata.Type)
+				path, next.Metadata.Type, sources[0], first.Metadata.Type)
 		}
 		if next.Metadata.ID != first.Metadata.ID {
 			return nil, fmt.Errorf("%s declares id %q but %s declares %q — all inputs must describe one artifact",
-				s, next.Metadata.ID, sources[0], first.Metadata.ID)
+				path, next.Metadata.ID, sources[0], first.Metadata.ID)
 		}
 	}
 
@@ -120,24 +124,24 @@ func mergeOrPassThrough(ctx context.Context, artifactType string, sources []stri
 		return body, filepath.Base(sources[0]), nil
 	}
 
-	f := &fetcher.File{}
+	fileFetcher := &fetcher.File{}
 	switch artifactType {
 	case "ControlCatalog":
-		c := &gemara.ControlCatalog{}
-		if err := c.LoadFiles(ctx, f, sources); err != nil {
+		catalog := &gemara.ControlCatalog{}
+		if err := catalog.LoadFiles(ctx, fileFetcher, sources); err != nil {
 			return nil, "", fmt.Errorf("merging control catalogs: %w", err)
 		}
-		body, err := yaml.Marshal(c)
+		body, err := yaml.Marshal(catalog)
 		if err != nil {
 			return nil, "", fmt.Errorf("marshaling merged control catalog: %w", err)
 		}
 		return body, "control-catalog.yaml", nil
 	case "GuidanceCatalog":
-		g := &gemara.GuidanceCatalog{}
-		if err := g.LoadFiles(ctx, f, sources); err != nil {
+		catalog := &gemara.GuidanceCatalog{}
+		if err := catalog.LoadFiles(ctx, fileFetcher, sources); err != nil {
 			return nil, "", fmt.Errorf("merging guidance catalogs: %w", err)
 		}
-		body, err := yaml.Marshal(g)
+		body, err := yaml.Marshal(catalog)
 		if err != nil {
 			return nil, "", fmt.Errorf("marshaling merged guidance catalog: %w", err)
 		}
@@ -156,26 +160,26 @@ func readYAML(path string, dst any) error {
 }
 
 func digestAll(paths []string) (map[string]string, error) {
-	out := make(map[string]string, len(paths))
-	for _, p := range paths {
-		d, err := sha256File(p)
+	digests := make(map[string]string, len(paths))
+	for _, path := range paths {
+		digest, err := sha256File(path)
 		if err != nil {
-			return nil, fmt.Errorf("digesting %s: %w", p, err)
+			return nil, fmt.Errorf("digesting %s: %w", path, err)
 		}
-		out[p] = "sha256:" + d
+		digests[path] = "sha256:" + digest
 	}
-	return out, nil
+	return digests, nil
 }
 
 func sha256File(path string) (string, error) {
-	f, err := os.Open(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
-	defer f.Close() //nolint:errcheck
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	defer file.Close() //nolint:errcheck
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
 		return "", err
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return hex.EncodeToString(hasher.Sum(nil)), nil
 }

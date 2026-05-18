@@ -36,16 +36,16 @@ type Predicate struct {
 
 // BuildDefinition mirrors SLSA's BuildDefinition struct.
 type BuildDefinition struct {
-	BuildType            string            `json:"buildType"`
-	ExternalParameters   map[string]any    `json:"externalParameters,omitempty"`
-	InternalParameters   map[string]any    `json:"internalParameters,omitempty"`
-	ResolvedDependencies []ResourceDescr   `json:"resolvedDependencies,omitempty"`
+	BuildType            string          `json:"buildType"`
+	ExternalParameters   map[string]any  `json:"externalParameters,omitempty"`
+	InternalParameters   map[string]any  `json:"internalParameters,omitempty"`
+	ResolvedDependencies []ResourceDescr `json:"resolvedDependencies,omitempty"`
 }
 
 // RunDetails mirrors SLSA's RunDetails struct.
 type RunDetails struct {
-	Builder    Builder        `json:"builder"`
-	Metadata   Metadata       `json:"metadata"`
+	Builder    Builder         `json:"builder"`
+	Metadata   Metadata        `json:"metadata"`
 	Byproducts []ResourceDescr `json:"byproducts,omitempty"`
 }
 
@@ -75,12 +75,12 @@ type ResourceDescr struct {
 // Input is the data grcli's caller has, packed into a tiny struct so
 // Build() doesn't grow a 12-arg signature as fields accrete.
 type Input struct {
-	ToolVersion   string
-	StartedOn     time.Time
-	ArtifactType  string
-	ArtifactID    string
-	ArtifactName  string
-	ArtifactDigest string // sha256:<hex> of the merged bundle body
+	ToolVersion    string
+	StartedOn      time.Time
+	ArtifactType   string
+	ArtifactID     string
+	ArtifactName   string
+	ArtifactDigest string            // sha256:<hex> of the merged bundle body
 	SourceFiles    map[string]string // path -> sha256:<hex>
 	Registry       string
 	Repository     string
@@ -152,10 +152,10 @@ func Build(in Input) Predicate {
 // a local invocation (best-effort, never asserted as trusted).
 func identifyBuilder(toolVersion string) (string, map[string]string) {
 	ver := map[string]string{
-		"grcli":      toolVersion,
-		"go":         runtime.Version(),
-		"go-arch":    runtime.GOARCH,
-		"go-os":      runtime.GOOS,
+		"grcli":   toolVersion,
+		"go":      runtime.Version(),
+		"go-arch": runtime.GOARCH,
+		"go-os":   runtime.GOOS,
 	}
 	if os.Getenv("GITHUB_ACTIONS") == "true" {
 		server := envOr("GITHUB_SERVER_URL", "https://github.com")
