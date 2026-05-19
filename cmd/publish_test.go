@@ -153,15 +153,18 @@ func TestResolveTargetURL(t *testing.T) {
 		AuthorID: "my-team",
 	}
 
-	t.Run("url drives discovery when registry is unset", func(t *testing.T) {
+	t.Run("url drives discovery and normalizes scheme + trailing slash off the registry host", func(t *testing.T) {
+		// Adversarial response: scheme included AND trailing slash, two
+		// real malformations a hub operator can produce by setting
+		// HUB_OCI_PUBLIC_URL = "https://registry.grc.store/". Both must
+		// be normalized away — the printed Reference and the SLSA
+		// provenance Registry field want a bare host.
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write([]byte(`{"registry_url":"https://discovered.example","hub_url":"https://hub.example","api_version":"v1"}`))
+			_, _ = w.Write([]byte(`{"registry_url":"https://discovered.example/","hub_url":"https://hub.example","api_version":"v1"}`))
 		}))
 		defer srv.Close()
-		// Discover() caches; clear between subtests via the package hook
-		// the hub_test.go exposes — but it's internal to that package and
-		// not exported here. Use a unique URL per subtest to sidestep the
-		// cache instead.
+		// Discover() caches per process; unique httptest URLs per subtest
+		// sidestep the cache without exposing the package's reset hook.
 
 		v := viper.New()
 		v.Set(flagURL, srv.URL)
@@ -169,8 +172,8 @@ func TestResolveTargetURL(t *testing.T) {
 
 		got, err := resolveTarget(context.Background(), v, loaded)
 		require.NoError(t, err)
-		require.Equal(t, "https://discovered.example", got.registryHost,
-			"registry should come from discovery when --registry is unset")
+		require.Equal(t, "discovered.example", got.registryHost,
+			"registry host must be bare (no scheme, no trailing slash) for cosign and OCI reference composition")
 	})
 
 	t.Run("url plus explicit registry is a conflict", func(t *testing.T) {

@@ -93,7 +93,11 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 		if err != nil {
 			return fmt.Errorf("hub discovery: %w", err)
 		}
-		registryHost = d.RegistryURL
+		// Strip scheme + trailing slash so the printed refLabel and
+		// any downstream display string is a valid OCI reference.
+		// PlainHTTP routing for http:// registries happens inside
+		// newRemoteRepo via stripScheme.
+		registryHost = registry.NormalizeRegistryHost(d.RegistryURL)
 	}
 	if registryHost != "" && repository == "" {
 		return errors.New("--repository is required when --registry or --url is set")

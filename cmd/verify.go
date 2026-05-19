@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/revanite-io/grcli/internal/hub"
+	"github.com/revanite-io/grcli/internal/registry"
 )
 
 // Flag names specific to verify. flagRegistry / flagRepository / flagTag
@@ -141,7 +142,12 @@ func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, err
 		if err != nil {
 			return verifyPolicy{}, fmt.Errorf("hub discovery: %w", err)
 		}
-		registryHost = d.RegistryURL
+		// The hub advertises registry_url with a scheme (https:// or
+		// http://). cosign wants a bare host in the image reference, so
+		// normalize before composing the reference. This is the verify-
+		// path equivalent of what newRemoteRepo does on the push/unpack
+		// side. Without this, cosign rejects the reference as invalid.
+		registryHost = registry.NormalizeRegistryHost(d.RegistryURL)
 	}
 
 	switch {

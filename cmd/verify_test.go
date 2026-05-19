@@ -3,8 +3,12 @@
 package cmd
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -83,6 +87,44 @@ func TestVerify_FlagValidation(t *testing.T) {
 			require.Contains(t, err.Error(), tc.wantSub)
 		})
 	}
+}
+
+// TestResolveVerifyPolicy_URL covers the ADR-0026 --url path through the
+// verify command. Catches the BLOCKER from the post-ship QA pass: when
+// --url drives discovery, the registry_url advertised by the hub carries
+// a scheme (https://...), which cosign rejects as an invalid OCI image
+// reference unless grcli strips it before composing <host>/<repo>:<tag>.
+func TestResolveVerifyPolicy_URL(t *testing.T) {
+	t.Run("url discovery yields a bare-host cosign reference", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"registry_url":"https://discovered.example/","hub_url":"https://hub.example","api_version":"v1"}`))
+		}))
+		defer srv.Close()
+
+		v := viper.New()
+		v.Set(flagURL, srv.URL)
+		v.Set(flagRepository, "team/artifact")
+		v.Set(flagTag, "1.0.0")
+		v.Set(flagCosignKey, "/keys/cosign.pub")
+
+		policy, err := resolveVerifyPolicy(context.Background(), v)
+		require.NoError(t, err)
+		require.Equal(t, "discovered.example/team/artifact:1.0.0", policy.reference,
+			"cosign reference must be bare-host/repo:tag; a https:// prefix would cause cosign to reject the reference")
+	})
+
+	t.Run("url plus explicit registry is a conflict at policy resolution", func(t *testing.T) {
+		v := viper.New()
+		v.Set(flagURL, "https://hub.example")
+		v.Set(flagRegistry, "explicit.example")
+		v.Set(flagRepository, "team/artifact")
+		v.Set(flagTag, "1.0.0")
+		v.Set(flagCosignKey, "/keys/cosign.pub")
+
+		_, err := resolveVerifyPolicy(context.Background(), v)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "conflicting flags: --url and --registry")
+	})
 }
 
 func TestVerifyPolicy_CosignArgs(t *testing.T) {

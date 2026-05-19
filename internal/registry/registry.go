@@ -118,17 +118,34 @@ func newRemoteRepo(registryHost, repository string) (*remote.Repository, error) 
 }
 
 // stripScheme accepts a registry hostname that may be a bare host or
-// a URL with an http://[s]:// prefix. Returns the bare host and a
-// plainHTTP flag indicating whether the original scheme was plain HTTP.
+// a URL with an http://[s]:// prefix. Returns the bare host (with any
+// trailing slash trimmed) and a plainHTTP flag indicating whether the
+// original scheme was plain HTTP. Internal entry point retained for
+// the in-package call site in newRemoteRepo; external callers (cmd/)
+// should use NormalizeRegistryHost which returns only the bare host.
 func stripScheme(in string) (host string, plainHTTP bool) {
 	switch {
 	case strings.HasPrefix(in, "http://"):
-		return strings.TrimPrefix(in, "http://"), true
+		return strings.TrimRight(strings.TrimPrefix(in, "http://"), "/"), true
 	case strings.HasPrefix(in, "https://"):
-		return strings.TrimPrefix(in, "https://"), false
+		return strings.TrimRight(strings.TrimPrefix(in, "https://"), "/"), false
 	default:
-		return in, false
+		return strings.TrimRight(in, "/"), false
 	}
+}
+
+// NormalizeRegistryHost takes a registry value that may be a bare host
+// or a full URL (typically the registry_url advertised by a hub via
+// ADR-0026's discovery endpoint) and returns a bare host suitable for
+// use in an OCI reference (`<host>/<repo>:<tag>`). Strips any scheme
+// and trailing slash. Exported for cmd/verify.go and cmd/publish.go,
+// which need a bare-host string for cosign and for the user-printed
+// reference; the push/unpack code paths inside this package go through
+// newRemoteRepo and use stripScheme directly so PlainHTTP propagates
+// to oras-go.
+func NormalizeRegistryHost(in string) string {
+	host, _ := stripScheme(in)
+	return host
 }
 
 // UnpackLocal reads a Gemara bundle from an OCI image layout directory.

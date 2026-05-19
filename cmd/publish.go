@@ -183,7 +183,13 @@ func resolveTarget(ctx context.Context, v *viper.Viper, loaded *source.Loaded) (
 		if err != nil {
 			return publishTarget{}, fmt.Errorf("hub discovery: %w", err)
 		}
-		registryHost = d.RegistryURL
+		// Hub advertises registry_url with a scheme (https://...). The
+		// printed Reference, the SLSA provenance Registry field, and
+		// any other downstream user of registryHost want a bare host;
+		// only the oras-go path needs PlainHTTP routing, and that is
+		// handled inside newRemoteRepo. Normalize once here so every
+		// consumer sees the same value.
+		registryHost = registry.NormalizeRegistryHost(d.RegistryURL)
 	}
 
 	target := publishTarget{
