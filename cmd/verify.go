@@ -12,6 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"github.com/revanite-io/grcli/internal/hub"
 )
 
 // Flag names specific to verify. flagRegistry / flagRepository / flagTag
@@ -63,12 +65,15 @@ Examples:
 	}
 
 	flags := cmd.Flags()
-	flags.String(flagRegistry, "", "OCI registry hostname (required)")
+	flags.String(flagURL, "", "grc.store base URL (discovers the registry; replaces --registry)")
+	flags.String(flagRegistry, "", "OCI registry hostname (required if --url is not set)")
 	flags.String(flagRepository, "", "repository path within the registry (required)")
 	flags.String(flagTag, "", "OCI tag to verify (required)")
 	flags.String(flagCosignKey, "", "cosign public key file (mutually exclusive with keyless flags)")
 	flags.String(flagCertIdentity, "", "expected signer identity (e.g., a GHA workflow URL)")
 	flags.String(flagCertOIDCIssuer, "", "expected OIDC issuer (e.g., https://token.actions.githubusercontent.com)")
+	// Deprecated: kept functional for one release cycle (ADR-0026).
+	_ = flags.MarkDeprecated(flagRegistry, "use --url to discover the registry from the hub")
 
 	return cmd
 }
@@ -79,7 +84,7 @@ func runVerify(cmd *cobra.Command, v *viper.Viper) error {
 	}
 	ctx := cmd.Context()
 
-	policy, err := resolveVerifyPolicy(v)
+	policy, err := resolveVerifyPolicy(ctx, v)
 	if err != nil {
 		return err
 	}
@@ -119,17 +124,29 @@ func (p verifyPolicy) cosignArgs() []string {
 	return append(args, p.reference)
 }
 
-func resolveVerifyPolicy(v *viper.Viper) (verifyPolicy, error) {
+func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, error) {
 	registryHost := v.GetString(flagRegistry)
+	url := v.GetString(flagURL)
 	repository := v.GetString(flagRepository)
 	tag := v.GetString(flagTag)
 	keyPath := v.GetString(flagCosignKey)
 	identity := v.GetString(flagCertIdentity)
 	issuer := v.GetString(flagCertOIDCIssuer)
 
+	if url != "" && registryHost != "" {
+		return verifyPolicy{}, errors.New("conflicting flags: --url and --registry; pick one")
+	}
+	if registryHost == "" && url != "" {
+		d, err := hub.Discover(ctx, url)
+		if err != nil {
+			return verifyPolicy{}, fmt.Errorf("hub discovery: %w", err)
+		}
+		registryHost = d.RegistryURL
+	}
+
 	switch {
 	case registryHost == "":
-		return verifyPolicy{}, errors.New("--registry is required")
+		return verifyPolicy{}, errors.New("--registry or --url is required")
 	case repository == "":
 		return verifyPolicy{}, errors.New("--repository is required")
 	case tag == "":

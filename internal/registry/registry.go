@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/gemaraproj/go-gemara/bundle"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -85,6 +86,12 @@ func UnpackRemote(ctx context.Context, registryHost, repository, tag string) (*b
 
 // newRemoteRepo constructs an authenticated oras remote.Repository for
 // the given host + repo path. Shared by PushRemote and UnpackRemote.
+//
+// registryHost may include an http:// or https:// scheme prefix —
+// useful when the hub's discovery endpoint advertises a full URL via
+// HUB_OCI_PUBLIC_URL (ADR-0026). When http://, the resulting client
+// uses plain-HTTP for the upstream registry traffic. When https:// or
+// no scheme, TLS is used (oras-go's default).
 func newRemoteRepo(registryHost, repository string) (*remote.Repository, error) {
 	if registryHost == "" {
 		return nil, errors.New("--registry is required")
@@ -92,10 +99,12 @@ func newRemoteRepo(registryHost, repository string) (*remote.Repository, error) 
 	if repository == "" {
 		return nil, errors.New("--repository is required")
 	}
-	repo, err := remote.NewRepository(registryHost + "/" + repository)
+	host, plainHTTP := stripScheme(registryHost)
+	repo, err := remote.NewRepository(host + "/" + repository)
 	if err != nil {
 		return nil, fmt.Errorf("constructing repository client: %w", err)
 	}
+	repo.PlainHTTP = plainHTTP
 	creds, err := dockerCredentials()
 	if err != nil {
 		return nil, fmt.Errorf("loading docker credentials: %w", err)
@@ -106,6 +115,20 @@ func newRemoteRepo(registryHost, repository string) (*remote.Repository, error) 
 		Credential: creds,
 	}
 	return repo, nil
+}
+
+// stripScheme accepts a registry hostname that may be a bare host or
+// a URL with an http://[s]:// prefix. Returns the bare host and a
+// plainHTTP flag indicating whether the original scheme was plain HTTP.
+func stripScheme(in string) (host string, plainHTTP bool) {
+	switch {
+	case strings.HasPrefix(in, "http://"):
+		return strings.TrimPrefix(in, "http://"), true
+	case strings.HasPrefix(in, "https://"):
+		return strings.TrimPrefix(in, "https://"), false
+	default:
+		return in, false
+	}
 }
 
 // UnpackLocal reads a Gemara bundle from an OCI image layout directory.

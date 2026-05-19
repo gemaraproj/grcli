@@ -129,7 +129,7 @@ func TestUnpack_FlagValidation(t *testing.T) {
 		{
 			name:    "no-source-or-registry",
 			args:    []string{"unpack", "--tag", "1.0.0"},
-			wantSub: "either --source or --registry is required",
+			wantSub: "either --source, --registry, or --url is required",
 		},
 		{
 			name:    "both-source-and-registry",
@@ -137,9 +137,14 @@ func TestUnpack_FlagValidation(t *testing.T) {
 			wantSub: "mutually exclusive",
 		},
 		{
+			name:    "url-plus-registry-conflict",
+			args:    []string{"unpack", "--tag", "1.0.0", "--url", "https://hub.example", "--registry", "registry.example", "--repository", "r"},
+			wantSub: "conflicting flags: --url and --registry",
+		},
+		{
 			name:    "registry-without-repository",
 			args:    []string{"unpack", "--tag", "1.0.0", "--registry", "registry.example"},
-			wantSub: "--repository is required when --registry is set",
+			wantSub: "--repository is required when --registry or --url is set",
 		},
 		{
 			name:    "missing-tag",

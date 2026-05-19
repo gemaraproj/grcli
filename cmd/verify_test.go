@@ -21,7 +21,17 @@ func TestVerify_FlagValidation(t *testing.T) {
 		{
 			name:    "missing-registry",
 			args:    []string{"verify", "--repository", "r", "--tag", "t", "--cosign-key", "k"},
-			wantSub: "--registry is required",
+			wantSub: "--registry or --url is required",
+		},
+		{
+			name: "url-plus-registry-conflict",
+			args: []string{
+				"verify",
+				"--url", "https://hub.example",
+				"--registry", "explicit.example",
+				"--repository", "r", "--tag", "t", "--cosign-key", "k",
+			},
+			wantSub: "conflicting flags: --url and --registry",
 		},
 		{
 			name:    "missing-repository",

@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/revanite-io/grcli/internal/hub"
 	"github.com/revanite-io/grcli/internal/registry"
 )
 
@@ -49,11 +50,14 @@ Examples:
 	}
 
 	flags := cmd.Flags()
-	flags.String(flagSource, "", "OCI image layout directory (mutually exclusive with --registry)")
+	flags.String(flagSource, "", "OCI image layout directory (mutually exclusive with --registry / --url)")
+	flags.String(flagURL, "", "grc.store base URL (discovers the registry; replaces --registry)")
 	flags.String(flagRegistry, "", "OCI registry hostname (mutually exclusive with --source)")
-	flags.String(flagRepository, "", "repository path within the registry (requires --registry)")
+	flags.String(flagRepository, "", "repository path within the registry (requires --registry or --url)")
 	flags.String(flagTag, "", "OCI tag to unpack (required)")
 	flags.String(flagOutput, "grcli-unpacked", "directory to write extracted files to")
+	// Deprecated: kept functional for one release cycle (ADR-0026).
+	_ = flags.MarkDeprecated(flagRegistry, "use --url to discover the registry from the hub")
 
 	// Bind at RunE time, not here — see comment in newPublishCmd.
 	return cmd
@@ -67,6 +71,7 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 
 	source := v.GetString(flagSource)
 	registryHost := v.GetString(flagRegistry)
+	url := v.GetString(flagURL)
 	repository := v.GetString(flagRepository)
 	tag := v.GetString(flagTag)
 	output := v.GetString(flagOutput)
@@ -75,12 +80,23 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 		return errors.New("--tag is required")
 	}
 	switch {
-	case source == "" && registryHost == "":
-		return errors.New("either --source or --registry is required")
-	case source != "" && registryHost != "":
-		return errors.New("--source and --registry are mutually exclusive")
-	case registryHost != "" && repository == "":
-		return errors.New("--repository is required when --registry is set")
+	case source == "" && registryHost == "" && url == "":
+		return errors.New("either --source, --registry, or --url is required")
+	case source != "" && (registryHost != "" || url != ""):
+		return errors.New("--source is mutually exclusive with --registry / --url")
+	case url != "" && registryHost != "":
+		return errors.New("conflicting flags: --url and --registry; pick one")
+	}
+
+	if registryHost == "" && url != "" {
+		d, err := hub.Discover(ctx, url)
+		if err != nil {
+			return fmt.Errorf("hub discovery: %w", err)
+		}
+		registryHost = d.RegistryURL
+	}
+	if registryHost != "" && repository == "" {
+		return errors.New("--repository is required when --registry or --url is set")
 	}
 
 	var (

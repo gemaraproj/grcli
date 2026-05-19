@@ -28,6 +28,7 @@ import (
 // viper.Get call site.
 const (
 	flagFile       = "file"
+	flagURL        = "url"
 	flagRegistry   = "registry"
 	flagRepository = "repository"
 	flagTag        = "tag"
@@ -57,6 +58,7 @@ instead of touching any network.`,
 
 	flags := cmd.Flags()
 	flags.StringSliceP(flagFile, "f", nil, "input file(s) describing one artifact (repeatable; comma-separated also accepted)")
+	flags.String(flagURL, "", "grc.store base URL, e.g. https://grc.store — discovers registry and replaces --registry + --hub-url")
 	flags.String(flagRegistry, "", "OCI registry hostname, e.g. registry.grc.store")
 	flags.String(flagRepository, "", "repository path within the registry (default: <author.id>/<metadata.id>, slugified to [a-z0-9._-])")
 	flags.String(flagTag, "", "OCI tag (default: metadata.version)")
@@ -66,6 +68,11 @@ instead of touching any network.`,
 	flags.String(flagOutput, "grcli-out", "directory to write the OCI layout to when --dry-run")
 	flags.Bool(flagNoSign, false, "skip cosign signing even when material is available")
 	flags.String(flagCosignKey, "", "cosign key file for local signing (or COSIGN_KEY)")
+	// Deprecated: keep functional for one release cycle so existing
+	// scripts and CI configs keep working. --url drives discovery and
+	// is the preferred surface (ADR-0026).
+	_ = flags.MarkDeprecated(flagRegistry, "use --url to discover the registry from the hub")
+	_ = flags.MarkDeprecated(flagHubURL, "use --url instead — it is both the hub URL and the discovery source")
 
 	// Flags are bound to viper inside RunE (see runPublish) rather than
 	// here at construction time. Two subcommands sharing a viper instance
@@ -106,7 +113,7 @@ func runPublish(cmd *cobra.Command, v *viper.Viper) error {
 		return err
 	}
 
-	target, err := resolveTarget(v, loaded)
+	target, err := resolveTarget(ctx, v, loaded)
 	if err != nil {
 		return err
 	}
@@ -144,9 +151,13 @@ func runPublish(cmd *cobra.Command, v *viper.Viper) error {
 	return signAndNotify(ctx, v, target.repository, target.tag, result.Reference)
 }
 
-// resolveTarget merges --tag/--repository/--registry/--dry-run with the
-// metadata-derived defaults and validates the combination.
-func resolveTarget(v *viper.Viper, loaded *source.Loaded) (publishTarget, error) {
+// resolveTarget merges --tag/--repository/--registry/--url/--dry-run with
+// the metadata-derived defaults and validates the combination. When --url
+// is set without --registry, it fetches the registry hostname from the
+// hub's discovery endpoint (ADR-0026). Both --url and --registry set is
+// a hard error — silent precedence is a footgun for scripted users
+// mid-migration.
+func resolveTarget(ctx context.Context, v *viper.Viper, loaded *source.Loaded) (publishTarget, error) {
 	tag := cmp.Or(v.GetString(flagTag), loaded.Version)
 	if tag == "" {
 		return publishTarget{}, errors.New("could not determine tag — set --tag or metadata.version")
@@ -155,15 +166,35 @@ func resolveTarget(v *viper.Viper, loaded *source.Loaded) (publishTarget, error)
 	if repository == "" {
 		return publishTarget{}, errors.New("could not determine --repository — set it explicitly or populate metadata.author.id + metadata.id")
 	}
+
+	url := v.GetString(flagURL)
+	explicitRegistry := v.GetString(flagRegistry)
+	switch {
+	case url != "" && explicitRegistry != "":
+		return publishTarget{}, errors.New("conflicting flags: --url and --registry; --url drives discovery, --registry pins explicitly — pick one")
+	case url != "" && v.GetString(flagHubURL) != "":
+		return publishTarget{}, errors.New("conflicting flags: --url and --hub-url; --url is both the hub URL and the discovery source — pick one")
+	}
+
+	registryHost := explicitRegistry
+	dryRun := v.GetBool(flagDryRun)
+	if registryHost == "" && url != "" && !dryRun {
+		d, err := hub.Discover(ctx, url)
+		if err != nil {
+			return publishTarget{}, fmt.Errorf("hub discovery: %w", err)
+		}
+		registryHost = d.RegistryURL
+	}
+
 	target := publishTarget{
-		registryHost: v.GetString(flagRegistry),
+		registryHost: registryHost,
 		repository:   repository,
 		tag:          tag,
-		dryRun:       v.GetBool(flagDryRun),
+		dryRun:       dryRun,
 		output:       v.GetString(flagOutput),
 	}
 	if !target.dryRun && target.registryHost == "" {
-		return publishTarget{}, errors.New("--registry is required (use --dry-run to skip push)")
+		return publishTarget{}, errors.New("--registry or --url is required (use --dry-run to skip push)")
 	}
 	return target, nil
 }
@@ -212,7 +243,10 @@ func signAndNotify(ctx context.Context, v *viper.Viper, repository, tag, referen
 
 	hubURL := v.GetString(flagHubURL)
 	if hubURL == "" {
-		fmt.Fprintln(os.Stdout, "skipping hub sync: --hub-url not set")
+		hubURL = v.GetString(flagURL)
+	}
+	if hubURL == "" {
+		fmt.Fprintln(os.Stdout, "skipping hub sync: --url (or --hub-url) not set")
 		return nil
 	}
 	syncResp, err := hub.New(hubURL, v.GetString(flagToken)).Sync(ctx, repository, tag)
