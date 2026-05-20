@@ -75,14 +75,17 @@ func Sign(ctx context.Context, opts Options) (*Result, error) {
 				Reason: "GITHUB_ACTIONS=true but ACTIONS_ID_TOKEN_REQUEST_TOKEN unset — set `permissions: id-token: write` in the workflow",
 			}, nil
 		}
-		if err := runCosign(ctx, "sign", "--yes", opts.Reference); err != nil {
+		args := append([]string{"sign", "--yes"}, registryCredArgs()...)
+		args = append(args, opts.Reference)
+		if err := runCosign(ctx, args...); err != nil {
 			return nil, fmt.Errorf("cosign keyless sign: %w", err)
 		}
 		return &Result{Mode: ModeKeyless}, nil
 	}
 
 	if opts.KeyPath != "" {
-		args := []string{"sign", "--yes", "--key", opts.KeyPath, opts.Reference}
+		args := append([]string{"sign", "--yes", "--key", opts.KeyPath}, registryCredArgs()...)
+		args = append(args, opts.Reference)
 		if err := runCosign(ctx, args...); err != nil {
 			return nil, fmt.Errorf("cosign key sign: %w", err)
 		}
@@ -99,4 +102,29 @@ func runCosign(ctx context.Context, args ...string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// registryCredArgs returns cosign registry-auth flags derived from the
+// same GRCLI_REGISTRY_* env vars grcli's oras push honors (see
+// internal/registry.dockerCredentials), or nil when none are set.
+//
+// Why this is needed: the cosign subprocess has its own credential
+// chain (the Docker config) and does NOT read GRCLI_REGISTRY_*. Now
+// that the registry rejects anonymous writes, an env-var-only publish
+// would push the bundle and then 401 when cosign pushes the signature
+// to the same repository. Forwarding the creds makes the env-var path a
+// complete publish flow; `docker login` remains a valid alternative
+// (cosign reads it natively, so we forward nothing and rely on the
+// chain in that case).
+//
+// Precedence mirrors dockerCredentials: username+password first, then a
+// raw bearer token.
+func registryCredArgs() []string {
+	if u, p := os.Getenv("GRCLI_REGISTRY_USERNAME"), os.Getenv("GRCLI_REGISTRY_PASSWORD"); u != "" && p != "" {
+		return []string{"--registry-username", u, "--registry-password", p}
+	}
+	if t := os.Getenv("GRCLI_REGISTRY_TOKEN"); t != "" {
+		return []string{"--registry-token", t}
+	}
+	return nil
 }

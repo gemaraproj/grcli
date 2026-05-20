@@ -27,7 +27,7 @@ checkout. Pre-built binaries and container images will follow.
 
 | What | Required for | How to obtain |
 | --- | --- | --- |
-| A grc.store account and bearer token | `publish` (hub sync step) | Sign up at [grc.store](https://grc.store) and copy your API token |
+| A grc.store account | `publish` (hub sync step) | Sign up at [grc.store](https://grc.store), then run `grcli login` to mint and store a bearer token via OIDC device flow (no manual copy-paste). The default `--url` is `https://hub.grc.store` — override only for private deployments. For CI: see "Publishing from GitHub Actions" below. |
 | A valid Gemara YAML artifact | every command except `verify` | See the [Gemara spec](https://github.com/gemaraproj/gemara) |
 | `cosign` on `PATH` | `publish` (signing), `verify` | https://docs.sigstore.dev/cosign/installation/ |
 | `cue` on `PATH` | `validate` | https://cuelang.org |
@@ -37,17 +37,70 @@ checkout. Pre-built binaries and container images will follow.
 If you only want to inspect or validate bundles, you don't need a hub
 token or registry credentials.
 
-## The four subcommands
+## Subcommands
 
 | Command | What it does |
 | --- | --- |
 | [`validate`](#validate) | Check a YAML file against the Gemara spec via `cue vet`. |
+| [`login`](#login) | Sign in to a grc.store hub via OIDC device-authorization grant; stores tokens locally for `publish` to pick up. |
 | [`publish`](#publish) | Pack one artifact + provenance into an OCI bundle, push it, optionally sign, and tell the hub. |
+| [`logout`](#logout) | Forget locally-stored credentials for a hub. |
 | [`unpack`](#unpack) | Pull a bundle from a registry (or a local layout) and write its files + manifest to disk. |
 | [`verify`](#verify) | Verify a remote bundle's cosign signature against a known publisher policy. |
 
-The natural workflow is `validate → publish → (consumer) verify →
-unpack`.
+The natural workflow is `login → validate → publish → (consumer)
+verify → unpack`.
+
+### login
+
+```sh
+grcli login           # --url defaults to https://hub.grc.store
+# Discovering https://hub.grc.store ...
+#
+# Open this URL in any browser to authorize:
+#   https://auth.grc.store/realms/gemara/device?user_code=ABCD-EFGH
+# Or visit https://auth.grc.store/realms/gemara/device and enter code:  ABCD-EFGH
+# (code expires in 5m0s)
+# Waiting for authorization...
+#
+# ✓ Signed in to https://auth.grc.store/realms/gemara
+#   Token stored at /Users/you/.local/share/grcli/credentials.json (expires 2026-05-19T17:42:00Z)
+```
+
+Drives the OAuth 2.0 Device Authorization Grant (RFC 8628) against
+the hub's configured Keycloak. The hub advertises its OIDC issuer +
+CLI client_id via the well-known endpoint (ADR-0028); `grcli login`
+self-configures from the single `--url`, which defaults to
+`https://hub.grc.store` so a vanilla `grcli login` works out of the
+box for the public deployment. Override the default with `--url <url>`
+or `GRCLI_URL` when targeting a private hub.
+
+Open the verification URL on any device with a browser — it does
+NOT have to be the same machine grcli is running on. Useful when
+publishing from an SSH'd shell, a container, or a CI sandbox where
+no browser is available locally (note: for unattended CI, see
+"Publishing from GitHub Actions" below — `grcli login` is for
+interactive use).
+
+Credentials are stored at `${XDG_DATA_HOME:-~/.local/share}/grcli/credentials.json`
+with 0600 perms, keyed by OIDC issuer so multiple grc.store
+deployments coexist. The refresh token is included; subsequent
+`publish` calls refresh transparently when the access token is
+within 60s of expiry.
+
+### logout
+
+```sh
+grcli logout --url https://hub.grc.store
+# ✓ Forgot credentials for https://auth.grc.store/realms/gemara
+
+# Or directly by issuer (useful when the hub is unreachable):
+grcli logout --issuer https://auth.grc.store/realms/gemara
+```
+
+Removes the local credential entry. The hub is not contacted; logout
+is purely a local-file operation. Other hubs you've logged into are
+untouched.
 
 ### validate
 
@@ -64,23 +117,39 @@ via `GRCLI_GEMARA_SPEC_DIR`.
 ### publish
 
 ```sh
-# One file → one artifact
-grcli publish -f controls.yaml \
-  --registry registry.grc.store \
-  --hub-url https://grc.store \
-  --token "$GRCSTORE_TOKEN"
+# Simplest path — after one `grcli login`, the stored token is picked
+# up automatically and --url defaults to https://hub.grc.store. No
+# flags needed beyond the file.
+grcli publish controls.yaml
 
 # Multi-file ControlCatalog or GuidanceCatalog (other types must be one file)
-grcli publish \
-  -f controls/access.yaml \
-  -f controls/vuln.yaml \
+grcli publish controls/access.yaml controls/vuln.yaml
+
+# Target a private hub instead of the default
+grcli publish controls.yaml --url https://hub.example.internal
+
+# Override the stored token explicitly (e.g. service-account token from
+# CI's secrets store) — wins over `grcli login`'s stored credentials.
+GRCLI_TOKEN="$GRCSTORE_TOKEN" grcli publish controls.yaml
+
+# Older split --registry / --hub-url flags (deprecated; --url is preferred).
+# Explicit --registry suppresses the default --url so no conflict fires.
+grcli publish -f controls.yaml \
   --registry registry.grc.store \
-  --hub-url https://grc.store \
+  --hub-url https://hub.grc.store \
   --token "$GRCSTORE_TOKEN"
 
 # Dry-run: write the bundle to disk, no network at all
-grcli publish -f controls.yaml --dry-run --output ./bundle-out
+grcli publish controls.yaml --dry-run --output ./bundle-out
 ```
+
+Token resolution order at publish time: `--token` flag > `GRCLI_TOKEN`
+env > credentials stored by `grcli login` (refreshed transparently if
+within 60s of expiry) > error pointing you at `grcli login`.
+
+Positional file args and `-f` / `--file` are mutually exclusive — pick
+one form per invocation. Every flag in the table below also reads from
+an env var (`GRCLI_*` prefix) and from `.grcli.yaml`.
 
 What happens, in order:
 
@@ -149,8 +218,9 @@ convention so existing cosign users see it picked up.
 
 | Flag | Env | Notes |
 | --- | --- | --- |
-| `-f, --file` | — | Repeatable; comma-separated also accepted |
-| `--registry` | `GRCLI_REGISTRY` | OCI registry hostname (e.g. `registry.grc.store`) |
+| `-f, --file` | `GRCLI_FILE` | Repeatable; comma-separated also accepted. Or pass files positionally — not both. |
+| `--url` | `GRCLI_URL` | grc.store base URL; discovers the registry from the hub's well-known endpoint (ADR-0026) |
+| `--registry` | `GRCLI_REGISTRY` | OCI registry hostname (e.g. `registry.grc.store`) — deprecated, prefer `--url` |
 | `--repository` | `GRCLI_REPOSITORY` | Defaults to `<author.id>/<metadata.id>` slugified to `[a-z0-9._-]` |
 | `--tag` | `GRCLI_TAG` | Defaults to `metadata.version` |
 | `--hub-url` | `GRCLI_HUB_URL` | e.g. `https://grc.store`; omit to skip the hub sync step |
@@ -178,7 +248,18 @@ overrides:
 | `GRCLI_REGISTRY_USERNAME` + `GRCLI_REGISTRY_PASSWORD` | Basic-auth username and password |
 | `GRCLI_REGISTRY_TOKEN` | Raw bearer token (alternative to user/pass) |
 
-The same envs apply to `publish` against private registries.
+The same envs apply to `publish`. **grc.store no longer accepts
+anonymous writes**, so `publish` requires a credential: either run
+`docker login <registry>` first, or set
+`GRCLI_REGISTRY_USERNAME=gemara-publisher` +
+`GRCLI_REGISTRY_PASSWORD=<shared publisher password from an admin>`.
+Without one of these the registry returns `401 Unauthorized` on push.
+
+When the `GRCLI_REGISTRY_*` envs are set, `grcli publish` forwards them
+to the `cosign sign` step as well, so signing the pushed bundle works
+over the same credential — no separate `docker login` needed. (If you
+authenticate via `docker login` instead, cosign reads that chain
+natively, so signing still works.)
 
 ### validate flags
 
