@@ -298,14 +298,29 @@ grcli publish -f controls.yaml --token "$GRCSTORE_TOKEN"
 
 ## Publishing from GitHub Actions
 
-`grcli` detects `GITHUB_ACTIONS=true` and uses Sigstore keyless signing
-via the workflow's OIDC token. The workflow needs `id-token: write`
-permission for that token to be issued.
+`grcli` publishes from CI with **no stored secret** — trusted publishing
+(ADR-0032). The workflow's own GitHub OIDC token is the credential: the hub
+validates it directly and maps your repository to the target namespace
+through a trusted-publisher binding an org admin created ahead of time.
+There is no `GRCLI_TOKEN`, no registry username/password, and no GitHub App
+to install. The same OIDC token also drives the hub-minted registry push
+token (ADR-0031) and Sigstore keyless signing.
+
+**One-time setup (org admin).** In your org's settings on the hub, add a
+*Trusted CI publisher* for the namespace, identifying the GitHub repo
+(`owner/repo`) and, optionally, a single git ref to pin to (e.g.
+`refs/heads/main`; leave empty to allow any branch/tag). One repo can be
+bound to more than one namespace. Until this binding exists the hub will
+reject the workflow's token with a 403 — that is expected.
+
+**Workflow.** Grant `id-token: write` so the runtime issues the OIDC token
+(needed for both hub auth and cosign keyless), then just call `grcli
+publish --url <hub>`. `grcli` detects `GITHUB_ACTIONS` and does the rest.
 
 ```yaml
 permissions:
   contents: read
-  id-token: write   # required for cosign keyless
+  id-token: write   # issue the workflow OIDC token (hub auth + cosign keyless)
 
 jobs:
   publish:
@@ -319,25 +334,29 @@ jobs:
           go-version: '1.25'
       - name: Install grcli
         run: |
-          git clone git@github.com:revanite-io/grcli.git /tmp/grcli
+          git clone https://github.com/revanite-io/grcli /tmp/grcli
           cd /tmp/grcli && make build && sudo mv bin/grcli /usr/local/bin/
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
       - name: Publish
-        env:
-          GRCLI_TOKEN: ${{ secrets.GRCSTORE_TOKEN }}
-        run: |
-          grcli publish -f controls.yaml \
-            --registry registry.grc.store \
-            --hub-url   https://grc.store
+        run: grcli publish -f controls.yaml --url https://hub.grc.store
 ```
 
-The cert identity that cosign records will be the URL of this workflow
-(e.g. `https://github.com/<org>/<repo>/.github/workflows/publish.yml@refs/heads/main`);
-share that, along with the issuer `https://token.actions.githubusercontent.com`,
-as your verification policy.
+A copy-pasteable version lives at
+[`examples/github-actions/publish.yml`](examples/github-actions/publish.yml).
+
+**Verification.** cosign records this workflow's URL as the certificate
+identity, e.g.
+`https://github.com/<org>/<repo>/.github/workflows/publish.yml@refs/heads/main`.
+Share that, with the issuer `https://token.actions.githubusercontent.com`,
+as your `grcli verify` policy (see the keyless example above).
+
+**Escape hatches.** Setting `--token`/`GRCLI_TOKEN` (a hub bearer) or
+`GRCLI_REGISTRY_TOKEN` / `GRCLI_REGISTRY_USERNAME`+`GRCLI_REGISTRY_PASSWORD`
+overrides trusted publishing and uses the supplied credential instead —
+useful from a non-GitHub CI that can't mint a GitHub OIDC token.
 
 ## License
 

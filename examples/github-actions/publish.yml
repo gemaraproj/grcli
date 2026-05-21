@@ -1,0 +1,49 @@
+# Sample GitHub Actions workflow: publish a grc.store catalog with grcli.
+#
+# Trusted publishing (ADR-0032) — no stored secret. The workflow's GitHub
+# OIDC token is the credential: the hub validates it directly and maps this
+# repository to the target namespace via a trusted-publisher binding.
+#
+# Prerequisite (one-time, by an org admin on the hub): add this repository
+# (owner/repo) as a Trusted CI publisher for the namespace, optionally
+# pinned to a single git ref. Without that binding the hub returns 403.
+#
+# Copy this into .github/workflows/ in your catalog repo and adjust the
+# file path, the --url, and the trigger to taste.
+
+name: Publish catalog
+
+on:
+  push:
+    branches: [main]
+    paths: ['controls.yaml']      # publish only when the catalog changes
+  workflow_dispatch: {}            # allow manual runs
+
+permissions:
+  contents: read
+  id-token: write                  # issue the workflow OIDC token
+                                   # (hub auth + cosign keyless signing)
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build grcli from source. Replace with a pinned release download
+      # once grcli ships binaries.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Install grcli
+        run: |
+          git clone https://github.com/revanite-io/grcli /tmp/grcli
+          cd /tmp/grcli && make build && sudo mv bin/grcli /usr/local/bin/
+
+      # Required for keyless signing; the publish step signs the bundle
+      # with the same workflow OIDC identity that authorizes the push.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Publish
+        run: grcli publish -f controls.yaml --url https://hub.grc.store
