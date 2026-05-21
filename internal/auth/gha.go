@@ -30,7 +30,8 @@ func InGitHubActions() bool {
 // validates that token directly (its iss is GitHub's, its aud is the
 // hub's CI audience) and maps the workflow's repository/ref through the
 // trusted-publisher bindings — so the audience must match the hub's
-// HUB_CI_OIDC_AUDIENCE (grcli uses the hub URL).
+// HUB_CI_OIDC_AUDIENCE. Callers pass the value the hub advertises as
+// ci_audience in its discovery doc (falling back to the hub URL).
 func FetchGitHubActionsToken(ctx context.Context, audience string) (string, error) {
 	reqURL := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL")
 	reqTok := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
