@@ -35,7 +35,8 @@ type Options struct {
 	// Disabled is set by --no-sign; when true we never invoke cosign.
 	Disabled bool
 	// KeyPath is the cosign key file path; equivalent to cosign sign --key.
-	// If empty and not in CI, we skip with a reason.
+	// If empty and not in CI, signing fails (the publish errors) unless
+	// Disabled (--no-sign) is set.
 	KeyPath string
 	// Reference is the full <registry>/<repository>:<tag> to sign.
 	Reference string
@@ -45,18 +46,63 @@ type Options struct {
 	PlainHTTP bool
 }
 
-// Sign attempts to attach a cosign signature to the pushed manifest.
+// Preflight reports whether a subsequent Sign call will be able to
+// produce a signature — WITHOUT running cosign — so callers can fail
+// before pushing rather than orphan unsigned bytes in the registry.
+//
+// It fails CLOSED: anything short of "we can sign" is an error, because
+// an unsigned artifact has no verifiable provenance and the hub does not
+// reject it on ingest. The single deliberate exception is --no-sign.
+//
+//	--no-sign            → ok (publishing unsigned is an explicit choice)
+//	cosign not on PATH   → error
+//	GITHUB_ACTIONS=true   → ok if id-token is available, else error
+//	KeyPath != ""        → ok
+//	otherwise            → error (no signing material)
+func Preflight(opts Options) error {
+	if opts.Disabled {
+		return nil
+	}
+	if _, err := exec.LookPath("cosign"); err != nil {
+		return errors.New("cosign not found on PATH — install it " +
+			"(e.g. the sigstore/cosign-installer step in CI) so the publish can be signed, " +
+			"or pass --no-sign to publish without provenance")
+	}
+	switch {
+	case os.Getenv("GITHUB_ACTIONS") == "true":
+		// Keyless: cosign reads the GHA OIDC token from the runtime env
+		// (ACTIONS_ID_TOKEN_REQUEST_TOKEN / _URL), which requires
+		// `permissions: id-token: write` on the workflow.
+		if os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN") == "" {
+			return errors.New("GITHUB_ACTIONS=true but ACTIONS_ID_TOKEN_REQUEST_TOKEN is unset — " +
+				"add `permissions: id-token: write` to the workflow for keyless signing, or pass --no-sign")
+		}
+		return nil
+	case opts.KeyPath != "":
+		return nil
+	default:
+		return errors.New("no signing material — pass --cosign-key (or COSIGN_KEY) for local signing, " +
+			"run in GitHub Actions with `permissions: id-token: write` for keyless signing, " +
+			"or pass --no-sign to publish without provenance")
+	}
+}
+
+// Sign attaches a cosign signature to the pushed manifest. It fails
+// CLOSED — the only path that returns ModeSkipped is --no-sign; every
+// other inability to sign (no cosign, no key/CI material, cosign error)
+// is an error, so a publish never silently downgrades to unsigned.
 //
 // Decision tree:
 //
-//	--no-sign           → ModeSkipped, no error
-//	cosign not on PATH  → ModeSkipped, no error  (with a reason)
-//	GITHUB_ACTIONS=true → ModeKeyless via OIDC
-//	KeyPath != ""       → ModeKey
-//	otherwise           → ModeSkipped, no error  (with a reason)
+//	--no-sign            → ModeSkipped, no error
+//	cosign not on PATH   → error
+//	GITHUB_ACTIONS=true   → ModeKeyless via OIDC (error if id-token missing)
+//	KeyPath != ""        → ModeKey
+//	otherwise            → error (no signing material)
 //
-// Signing failure (cosign returns nonzero) is an error — once we've
-// decided to sign, the caller almost certainly wants to know it broke.
+// Callers should run Preflight before pushing; Sign repeats the same
+// checks as a backstop because it runs after the bytes are already in
+// the registry.
 func Sign(ctx context.Context, opts Options) (*Result, error) {
 	if opts.Disabled {
 		return &Result{Mode: ModeSkipped, Reason: "--no-sign"}, nil
@@ -64,21 +110,13 @@ func Sign(ctx context.Context, opts Options) (*Result, error) {
 	if opts.Reference == "" {
 		return nil, errors.New("sign: empty reference")
 	}
-	if _, err := exec.LookPath("cosign"); err != nil {
-		return &Result{Mode: ModeSkipped, Reason: "cosign not on PATH"}, nil
+	if err := Preflight(opts); err != nil {
+		return nil, fmt.Errorf("sign: %w", err)
 	}
 
+	// Preflight guarantees cosign is present and (GHA-with-id-token OR a
+	// key) is available. Prefer keyless in CI, mirroring the old order.
 	if os.Getenv("GITHUB_ACTIONS") == "true" {
-		// Keyless: cosign reads the GHA OIDC token from the runtime
-		// env (ACTIONS_ID_TOKEN_REQUEST_TOKEN / _URL). The workflow
-		// must set `permissions: id-token: write` for that to work,
-		// which we surface in the warning below if the token vars
-		// aren't present.
-		if os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN") == "" {
-			return &Result{Mode: ModeSkipped,
-				Reason: "GITHUB_ACTIONS=true but ACTIONS_ID_TOKEN_REQUEST_TOKEN unset — set `permissions: id-token: write` in the workflow",
-			}, nil
-		}
 		args := append([]string{"sign", "--yes"}, registryFlags(opts)...)
 		args = append(args, opts.Reference)
 		if err := runCosign(ctx, args...); err != nil {
@@ -86,19 +124,12 @@ func Sign(ctx context.Context, opts Options) (*Result, error) {
 		}
 		return &Result{Mode: ModeKeyless}, nil
 	}
-
-	if opts.KeyPath != "" {
-		args := append([]string{"sign", "--yes", "--key", opts.KeyPath}, registryFlags(opts)...)
-		args = append(args, opts.Reference)
-		if err := runCosign(ctx, args...); err != nil {
-			return nil, fmt.Errorf("cosign key sign: %w", err)
-		}
-		return &Result{Mode: ModeKey}, nil
+	args := append([]string{"sign", "--yes", "--key", opts.KeyPath}, registryFlags(opts)...)
+	args = append(args, opts.Reference)
+	if err := runCosign(ctx, args...); err != nil {
+		return nil, fmt.Errorf("cosign key sign: %w", err)
 	}
-
-	return &Result{Mode: ModeSkipped,
-		Reason: "no signing material — pass --cosign-key for local signing or run in GitHub Actions with id-token: write",
-	}, nil
+	return &Result{Mode: ModeKey}, nil
 }
 
 func runCosign(ctx context.Context, args ...string) error {

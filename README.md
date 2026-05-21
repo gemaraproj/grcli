@@ -43,7 +43,7 @@ token or registry credentials.
 | --- | --- |
 | [`validate`](#validate) | Check a YAML file against the Gemara spec via `cue vet`. |
 | [`login`](#login) | Sign in to a grc.store hub via OIDC device-authorization grant; stores tokens locally for `publish` to pick up. |
-| [`publish`](#publish) | Pack one artifact + provenance into an OCI bundle, push it, optionally sign, and tell the hub. |
+| [`publish`](#publish) | Pack one artifact + provenance into an OCI bundle, push it, sign it (required unless `--no-sign`), and tell the hub. |
 | [`logout`](#logout) | Forget locally-stored credentials for a hub. |
 | [`unpack`](#unpack) | Pull a bundle from a registry (or a local layout) and write its files + manifest to disk. |
 | [`verify`](#verify) | Verify a remote bundle's cosign signature against a known publisher policy. |
@@ -156,7 +156,7 @@ What happens, in order:
 1. Loads the file(s) and verifies they describe **one** artifact (matching `metadata.id` and `metadata.type`). For `ControlCatalog` and `GuidanceCatalog`, multiple files are merged via `go-gemara`'s `LoadFiles`; other types accept exactly one file.
 2. Generates a SLSA v1.0-shaped provenance record (builder identity, git ref, source-file digests, tool version) and embeds it under `metadata.provenance` in the bundle manifest.
 3. Packs the artifact + provenance into a Gemara OCI bundle (`application/vnd.gemara.bundle.v1`) and pushes it to the configured registry as `<registry>/<repository>:<tag>`.
-4. If `cosign` is on `PATH` and signing material is available, signs the pushed manifest. Keyless via OIDC when `GITHUB_ACTIONS=true`; otherwise via `--cosign-key`.
+4. Signs the pushed manifest with `cosign` — keyless via OIDC when `GITHUB_ACTIONS=true`, otherwise with `--cosign-key`/`COSIGN_KEY`. **Signing is required by default**: if `cosign` isn't on `PATH` or no signing material is available, `publish` fails (it's checked *before* the push, so nothing unsigned reaches the registry) rather than silently shipping an unsigned, unverifiable artifact. Pass `--no-sign` to deliberately publish without provenance.
 5. Calls `POST /v1/bundles/sync` on the hub so the index picks up the new version.
 
 `--dry-run` writes an OCI image layout to `--output` and skips steps 3–5
@@ -227,7 +227,7 @@ convention so existing cosign users see it picked up.
 | `--token` | `GRCLI_TOKEN` | Bearer token for the hub sync call |
 | `--dry-run` | `GRCLI_DRY_RUN` | Skip all network; write OCI layout to `--output` |
 | `--output` | `GRCLI_OUTPUT` | Dry-run target dir (default `grcli-out`) |
-| `--no-sign` | `GRCLI_NO_SIGN` | Skip cosign even when material is available |
+| `--no-sign` | `GRCLI_NO_SIGN` | Publish unsigned — the explicit opt-out; the result has no verifiable provenance |
 | `--cosign-key` | `COSIGN_KEY` | Local cosign private key file |
 
 ### unpack flags

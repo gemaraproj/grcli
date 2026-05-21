@@ -130,6 +130,17 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 	}
 
 	if !target.dryRun {
+		// Pre-flight: fail BEFORE packing/pushing if we intend to sign but
+		// can't — a signing misconfig must not leave unsigned bytes orphaned
+		// in the registry. This is a local, instant check (cosign on PATH +
+		// key/CI material); --no-sign is the explicit opt-out for an
+		// unsigned, unverifiable publish.
+		if err := sign.Preflight(sign.Options{
+			Disabled: v.GetBool(flagNoSign),
+			KeyPath:  v.GetString(flagCosignKey),
+		}); err != nil {
+			return err
+		}
 		// Pre-flight: versions are immutable, so halt BEFORE packing or
 		// pushing if the coordinate is already taken (ADR-0031). This is
 		// what stops a re-publish from clobbering existing bytes in the
