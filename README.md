@@ -1,9 +1,10 @@
 # grcli
 
-> [!WARNING]
+> [!NOTE]
 >
-> This repo is a work in progress. Pre-built binaries are not yet
-> published; install instructions below build from source.
+> Pre-built binaries ship as a public, signed OCI artifact on GHCR per
+> tagged release (see [Installation](#installation)). Until the first
+> `v*` tag is pushed there is nothing to pull yet — build from source.
 
 A command-line tool for the GRC artifact registry at
 [grc.store](https://grc.store). `grcli` validates Gemara YAML against
@@ -11,6 +12,59 @@ the spec, packs it into a signed OCI bundle with SLSA-shaped provenance,
 publishes it to a registry, and verifies bundles you fetch back.
 
 ## Installation
+
+### Pre-built binary (recommended)
+
+Each release is published as a public, multi-platform OCI artifact at
+`ghcr.io/revanite-io/grcli` — linux, macOS, and Windows on amd64 and
+arm64. The source repo is private, but the GHCR *package* is public, so
+pulling needs **no token from anywhere**. (These are raw OCI artifacts,
+not container images, which is why native macOS binaries are included.)
+
+You need [`oras`](https://oras.land) ≥ 1.3 on `PATH`. Pick your platform
+and drop the binary into the current directory:
+
+```sh
+# platforms: linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
+oras pull ghcr.io/revanite-io/grcli:latest --platform darwin/arm64
+chmod +x grcli && sudo mv grcli /usr/local/bin/
+```
+
+Pin to a release tag (`:v0.1.0`) instead of `latest` for reproducible
+installs. Optionally verify the cosign signature first:
+
+```sh
+cosign verify ghcr.io/revanite-io/grcli:v0.1.0 \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/revanite-io/grcli/.github/workflows/release.yml@'
+```
+
+### GitHub Actions
+
+Inside the `revanite-io` org, use the bundled composite action — it pulls
+the right platform binary onto `PATH`, no token:
+
+```yaml
+- uses: revanite-io/grcli/.github/actions/install@v0.1.0
+  with:
+    version: v0.1.0   # or "latest"
+    # verify: "true"  # cosign-verify first (needs a cosign-installer step)
+- run: grcli --version
+```
+
+Because this repo is private, `uses: revanite-io/grcli/...` resolves only
+for workflows that can read it — i.e. other repos in the same org, with
+org settings allowing access to actions in private repos. From an
+**external** repo, skip the action and pull the public artifact directly:
+
+```yaml
+- uses: oras-project/setup-oras@v1
+- run: |
+    oras pull ghcr.io/revanite-io/grcli:v0.1.0 --platform linux/amd64
+    sudo install grcli /usr/local/bin/grcli
+```
+
+### Build from source
 
 Requires Go ≥ 1.25.
 
@@ -21,7 +75,7 @@ make build      # produces ./bin/grcli
 ```
 
 Move `./bin/grcli` somewhere on your `$PATH`, or run it from the
-checkout. Pre-built binaries and container images will follow.
+checkout.
 
 ## Prerequisites
 
@@ -328,14 +382,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Build grcli from source; replace with a release fetch once available.
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
+      # Fetch the pre-built binary from the public GHCR artifact (no token).
+      # Pin to a released tag for reproducibility.
+      - uses: oras-project/setup-oras@v1
       - name: Install grcli
         run: |
-          git clone https://github.com/revanite-io/grcli /tmp/grcli
-          cd /tmp/grcli && make build && sudo mv bin/grcli /usr/local/bin/
+          oras pull ghcr.io/revanite-io/grcli:v0.1.0 --platform linux/amd64
+          sudo install grcli /usr/local/bin/grcli
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3

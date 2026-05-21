@@ -30,15 +30,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Build grcli from source. Replace with a pinned release download
-      # once grcli ships binaries.
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
+      # Fetch the pre-built grcli binary from the public GHCR artifact.
+      # No token needed (the package is public). Pin to a released tag.
+      - uses: oras-project/setup-oras@v1
       - name: Install grcli
         run: |
-          git clone https://github.com/revanite-io/grcli /tmp/grcli
-          cd /tmp/grcli && make build && sudo mv bin/grcli /usr/local/bin/
+          oras pull ghcr.io/revanite-io/grcli:v0.1.0 --platform linux/amd64
+          sudo install grcli /usr/local/bin/grcli
 
       # Required for keyless signing; the publish step signs the bundle
       # with the same workflow OIDC identity that authorizes the push.
