@@ -250,3 +250,72 @@ func TestResolveTargetURL(t *testing.T) {
 	// discover_test exports a reset (it's package-internal).
 	_ = hub.Discovery{} // keep the hub import alive in case future tests use it
 }
+
+func TestCIAudience(t *testing.T) {
+	t.Run("prefers the hub-advertised ci_audience", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"registry_url":"https://r","hub_url":"https://h","api_version":"v1","ci_audience":"https://hub.example/ci"}`))
+		}))
+		defer srv.Close()
+
+		v := viper.New()
+		v.Set(flagURL, srv.URL)
+
+		require.Equal(t, "https://hub.example/ci", ciAudience(context.Background(), v),
+			"discovery's ci_audience must win so the token audience matches HUB_CI_OIDC_AUDIENCE")
+	})
+
+	t.Run("falls back to the hub URL when ci_audience is not advertised", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"registry_url":"https://r","hub_url":"https://h","api_version":"v1"}`))
+		}))
+		defer srv.Close()
+
+		v := viper.New()
+		v.Set(flagURL, srv.URL)
+
+		require.Equal(t, srv.URL, ciAudience(context.Background(), v),
+			"absent ci_audience must fall back to the publish hub URL")
+	})
+}
+
+func TestResolveBearerToken(t *testing.T) {
+	t.Run("uses GitHub Actions OIDC when present and no explicit token", func(t *testing.T) {
+		tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"value":"gha.workflow.jwt"}`))
+		}))
+		defer tokenSrv.Close()
+		discoSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"registry_url":"https://r","hub_url":"https://h","api_version":"v1","ci_audience":"https://hub.example/ci"}`))
+		}))
+		defer discoSrv.Close()
+
+		t.Setenv("GITHUB_ACTIONS", "true")
+		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", tokenSrv.URL)
+		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "req-tok")
+
+		v := viper.New()
+		v.Set(flagURL, discoSrv.URL)
+
+		got, err := resolveBearerToken(context.Background(), v)
+		require.NoError(t, err)
+		require.Equal(t, "gha.workflow.jwt", got,
+			"in CI with no explicit token, the workflow OIDC token is the credential (ADR-0032)")
+	})
+
+	t.Run("explicit --token wins even inside GitHub Actions", func(t *testing.T) {
+		// Point the Actions endpoint at an unreachable URL: if the GHA
+		// path were taken it would fail, so a clean explicit return proves
+		// the explicit token short-circuits before the GHA branch.
+		t.Setenv("GITHUB_ACTIONS", "true")
+		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "http://127.0.0.1:0/should-not-be-called")
+		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "req-tok")
+
+		v := viper.New()
+		v.Set(flagToken, "explicit-tok")
+
+		got, err := resolveBearerToken(context.Background(), v)
+		require.NoError(t, err)
+		require.Equal(t, "explicit-tok", got)
+	})
+}

@@ -153,4 +153,36 @@ func TestDiscover(t *testing.T) {
 			t.Fatal("expected error for empty base URL, got nil")
 		}
 	})
+
+	t.Run("decodes ci_audience for trusted publishing", func(t *testing.T) {
+		resetDiscoveryCacheForTest()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"registry_url":"https://r","hub_url":"https://h","api_version":"v1","ci_audience":"https://hub.example/ci"}`))
+		}))
+		defer srv.Close()
+
+		d, err := Discover(context.Background(), srv.URL)
+		if err != nil {
+			t.Fatalf("Discover error: %v", err)
+		}
+		if d.CIOIDCAudience != "https://hub.example/ci" {
+			t.Errorf("CIOIDCAudience = %q, want https://hub.example/ci", d.CIOIDCAudience)
+		}
+	})
+
+	t.Run("ci_audience absent leaves the field empty", func(t *testing.T) {
+		resetDiscoveryCacheForTest()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"registry_url":"https://r","hub_url":"https://h","api_version":"v1"}`))
+		}))
+		defer srv.Close()
+
+		d, err := Discover(context.Background(), srv.URL)
+		if err != nil {
+			t.Fatalf("Discover error: %v", err)
+		}
+		if d.CIOIDCAudience != "" {
+			t.Errorf("CIOIDCAudience = %q, want empty when not advertised", d.CIOIDCAudience)
+		}
+	})
 }
