@@ -330,6 +330,21 @@ func checkVersionAvailable(ctx context.Context, v *viper.Viper, repository, tag 
 	}
 }
 
+// ciAudience returns the audience grcli requests on its GitHub Actions
+// OIDC token. The hub advertises its expected CI audience via discovery
+// (ci_audience); prefer that so the token grcli mints and the value the
+// hub validates can't drift (a trailing slash or a stale env var would
+// otherwise produce an opaque 401). Falls back to the hub URL when
+// discovery omits it (an older hub, or one with CI publishing off).
+func ciAudience(ctx context.Context, v *viper.Viper) string {
+	if url := v.GetString(flagURL); url != "" {
+		if d, err := hub.Discover(ctx, url); err == nil && d.CIOIDCAudience != "" {
+			return d.CIOIDCAudience
+		}
+	}
+	return publishHubURL(v)
+}
+
 // publishHubURL returns the hub base URL for the publish run: --hub-url
 // when set (deprecated, explicit), otherwise --url. Empty means neither
 // was given, so there's no hub to sync with or mint a registry token from.
@@ -385,11 +400,12 @@ func resolveBearerToken(ctx context.Context, v *viper.Viper) (string, error) {
 	// when no explicit token is set and we're in a GHA job, fetch the
 	// workflow's OIDC token and present it directly — the hub validates it
 	// (ADR-0032) and maps the repo to its trusted-publisher namespace. No
-	// secret, no login. The audience is the hub URL (matches the hub's
-	// HUB_CI_OIDC_AUDIENCE). On any failure we fall through to the normal
-	// stored-credential path rather than hard-failing.
+	// secret, no login. The audience comes from the hub's discovery doc
+	// (ci_audience), falling back to the hub URL, so it always matches the
+	// hub's HUB_CI_OIDC_AUDIENCE. On any failure we fall through to the
+	// normal stored-credential path rather than hard-failing.
 	if in.ExplicitToken == "" && auth.InGitHubActions() {
-		if tok, err := auth.FetchGitHubActionsToken(ctx, publishHubURL(v)); err == nil && tok != "" {
+		if tok, err := auth.FetchGitHubActionsToken(ctx, ciAudience(ctx, v)); err == nil && tok != "" {
 			return tok, nil
 		} else if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: GitHub Actions OIDC token unavailable, falling back: %v\n", err)

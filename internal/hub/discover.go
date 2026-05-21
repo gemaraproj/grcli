@@ -27,6 +27,10 @@ type Discovery struct {
 	APIVersion      string `json:"api_version"`
 	OIDCIssuer      string `json:"oidc_issuer,omitempty"`
 	OIDCCLIClientID string `json:"oidc_cli_client_id,omitempty"`
+	// CIOIDCAudience is the audience grcli must request on its GitHub
+	// Actions OIDC token (ADR-0032). Preferring this over the bare hub
+	// URL keeps grcli's audience aligned with what the hub validates.
+	CIOIDCAudience string `json:"ci_audience,omitempty"`
 }
 
 // wellKnownPath is appended to the user-supplied hub base URL. RFC
