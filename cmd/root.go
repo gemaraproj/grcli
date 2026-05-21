@@ -33,11 +33,11 @@ func newRootCmd() *cobra.Command {
 	var cfgFile string
 
 	cmd := &cobra.Command{
-		Use:           "grcli",
-		Short:         "Validate, publish, unpack, and verify Gemara artifact bundles against grc.store",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		Version:       version,
+		Use:               "grcli",
+		Short:             "Validate, publish, unpack, and verify Gemara artifact bundles against grc.store",
+		SilenceUsage:      true,
+		SilenceErrors:     true,
+		Version:           version,
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 		// Cobra does NOT chain PersistentPreRunE: if a subcommand defines
 		// its own, this one is silently skipped. If you add a subcommand

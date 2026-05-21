@@ -106,4 +106,3 @@ func printDeviceInstructions(out io.Writer, da *auth.DeviceAuthorization) {
 	}
 	fmt.Fprintln(out, "Waiting for authorization...")
 }
-
