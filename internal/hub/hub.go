@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"strings"
 	"time"
 )
@@ -47,6 +48,60 @@ func New(baseURL, token string) *Client {
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		Token:   token,
 		HTTP:    &http.Client{Timeout: 60 * time.Second},
+	}
+}
+
+// VersionStatus reports whether a (namespace, catalogID, version)
+// coordinate is already taken on the hub.
+type VersionStatus int
+
+const (
+	// VersionAbsent — the coordinate is free to publish (hub 404).
+	VersionAbsent VersionStatus = iota
+	// VersionPresent — already published at this exact coordinate (hub 200).
+	VersionPresent
+	// VersionTombstoned — previously published then yanked (hub 410). The
+	// coordinate stays permanently taken; versions are immutable.
+	VersionTombstoned
+)
+
+// VersionExists checks whether a version coordinate is already published,
+// via GET /v1/catalogs/{ns}/{id}/versions/{version}. Reads are public, so
+// no token is required. Used by `grcli publish` as a pre-flight so it
+// halts BEFORE packing/pushing when the version is taken (versions are
+// immutable — the registry write would otherwise clobber the existing
+// bytes before the hub's sync-time guard could reject it).
+func (c *Client) VersionExists(ctx context.Context, namespace, catalogID, version string) (VersionStatus, error) {
+	if c.BaseURL == "" {
+		return VersionAbsent, errors.New("hub base URL is required")
+	}
+	url := fmt.Sprintf("%s/v1/catalogs/%s/%s/versions/%s",
+		c.BaseURL,
+		neturl.PathEscape(namespace),
+		neturl.PathEscape(catalogID),
+		neturl.PathEscape(version))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return VersionAbsent, err
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return VersionAbsent, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return VersionPresent, nil
+	case http.StatusNotFound:
+		return VersionAbsent, nil
+	case http.StatusGone:
+		return VersionTombstoned, nil
+	default:
+		return VersionAbsent, fmt.Errorf("hub version check %s returned %d", url, resp.StatusCode)
 	}
 }
 

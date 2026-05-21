@@ -23,8 +23,12 @@ func TestVerify_FlagValidation(t *testing.T) {
 		wantSub string
 	}{
 		{
+			// Pass --url="" to defeat the bake-in default — otherwise
+			// the default would supply a registry source via discovery
+			// and this test's "no registry source" premise wouldn't be
+			// reachable.
 			name:    "missing-registry",
-			args:    []string{"verify", "--repository", "r", "--tag", "t", "--cosign-key", "k"},
+			args:    []string{"verify", "--repository", "r", "--tag", "t", "--cosign-key", "k", "--url", ""},
 			wantSub: "--registry or --url is required",
 		},
 		{

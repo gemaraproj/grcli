@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -66,7 +67,7 @@ Examples:
 	}
 
 	flags := cmd.Flags()
-	flags.String(flagURL, "", "grc.store base URL (discovers the registry; replaces --registry)")
+	flags.String(flagURL, defaultURL, "grc.store base URL (discovers the registry; replaces --registry)")
 	flags.String(flagRegistry, "", "OCI registry hostname (required if --url is not set)")
 	flags.String(flagRepository, "", "repository path within the registry (required)")
 	flags.String(flagTag, "", "OCI tag to verify (required)")
@@ -83,11 +84,21 @@ func runVerify(cmd *cobra.Command, v *viper.Viper) error {
 	if err := v.BindPFlags(cmd.Flags()); err != nil {
 		return fmt.Errorf("binding flags: %w", err)
 	}
+	suppressDefaultURLIfExplicit(cmd, v, flagRegistry)
 	ctx := cmd.Context()
 
 	policy, err := resolveVerifyPolicy(ctx, v)
 	if err != nil {
 		return err
+	}
+
+	// ADR-0031: cosign verify pulls the signature from the bearer-auth
+	// registry. Mint an anonymous pull token from the hub (when --url is
+	// set and no override is present) and pass it to cosign explicitly —
+	// the subprocess can't read GRCLI_REGISTRY_TOKEN from the environment.
+	policy.registryToken, err = ensureRegistryToken(ctx, v.GetString(flagURL), "", v.GetString(flagRepository), []string{"pull"})
+	if err != nil {
+		return fmt.Errorf("fetching registry pull token: %w", err)
 	}
 
 	if _, err := exec.LookPath("cosign"); err != nil {
@@ -102,10 +113,12 @@ func runVerify(cmd *cobra.Command, v *viper.Viper) error {
 // verifyPolicy bundles the resolved registry coordinates with the trust
 // material used to verify the signature.
 type verifyPolicy struct {
-	reference string // <registry>/<repository>:<tag>
-	keyPath   string // populated for key-based verification
-	identity  string // populated for keyless verification
-	issuer    string // populated for keyless verification
+	reference     string // <registry>/<repository>:<tag>
+	keyPath       string // populated for key-based verification
+	identity      string // populated for keyless verification
+	issuer        string // populated for keyless verification
+	registryToken string // Distribution pull token for the bearer-auth registry (ADR-0031)
+	plainHTTP     bool   // registry speaks plain HTTP (local dev) — pass cosign --allow-http-registry
 }
 
 func (p verifyPolicy) modeDescription() string {
@@ -117,6 +130,16 @@ func (p verifyPolicy) modeDescription() string {
 
 func (p verifyPolicy) cosignArgs() []string {
 	args := []string{"verify"}
+	// cosign verify pulls the signature from the registry, which now
+	// requires a bearer token (ADR-0031). Unlike the oras path, the
+	// cosign subprocess can't read GRCLI_REGISTRY_TOKEN, so pass it
+	// explicitly when we minted one.
+	if p.registryToken != "" {
+		args = append(args, "--registry-token", p.registryToken)
+	}
+	if p.plainHTTP {
+		args = append(args, "--allow-http-registry")
+	}
 	if p.keyPath != "" {
 		args = append(args, "--key", p.keyPath)
 	} else {
@@ -142,13 +165,14 @@ func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, err
 		if err != nil {
 			return verifyPolicy{}, fmt.Errorf("hub discovery: %w", err)
 		}
-		// The hub advertises registry_url with a scheme (https:// or
-		// http://). cosign wants a bare host in the image reference, so
-		// normalize before composing the reference. This is the verify-
-		// path equivalent of what newRemoteRepo does on the push/unpack
-		// side. Without this, cosign rejects the reference as invalid.
-		registryHost = registry.NormalizeRegistryHost(d.RegistryURL)
+		registryHost = d.RegistryURL
 	}
+	// The registry value (discovered or --registry) may carry an http(s)://
+	// scheme. Record whether it's plain HTTP (so cosign gets
+	// --allow-http-registry for a local dev zot), then normalize to a bare
+	// host — cosign rejects a reference that includes a scheme.
+	plainHTTP := strings.HasPrefix(registryHost, "http://")
+	registryHost = registry.NormalizeRegistryHost(registryHost)
 
 	switch {
 	case registryHost == "":
@@ -175,6 +199,7 @@ func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, err
 		keyPath:   keyPath,
 		identity:  identity,
 		issuer:    issuer,
+		plainHTTP: plainHTTP,
 	}, nil
 }
 

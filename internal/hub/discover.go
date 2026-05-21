@@ -15,13 +15,18 @@ import (
 )
 
 // Discovery mirrors the JSON shape served by the hub's GET
-// /.well-known/ext.grc-store endpoint (ADR-0026 on the backend side).
-// The hub advertises its paired OCI registry so grcli can take one URL
-// on the command line and learn where to push OCI bytes.
+// /.well-known/ext.grc-store endpoint (ADR-0026 on the backend side,
+// extended by ADR-0028 with the OIDC fields). The hub advertises its
+// paired OCI registry plus the Keycloak coordinates grcli's device-grant
+// login uses; the OIDC fields are optional — a hub that hasn't been
+// configured for device-grant just omits them, and grcli falls back to
+// requiring an explicit --token / GRCLI_TOKEN.
 type Discovery struct {
-	RegistryURL string `json:"registry_url"`
-	HubURL      string `json:"hub_url"`
-	APIVersion  string `json:"api_version"`
+	RegistryURL     string `json:"registry_url"`
+	HubURL          string `json:"hub_url"`
+	APIVersion      string `json:"api_version"`
+	OIDCIssuer      string `json:"oidc_issuer,omitempty"`
+	OIDCCLIClientID string `json:"oidc_cli_client_id,omitempty"`
 }
 
 // wellKnownPath is appended to the user-supplied hub base URL. RFC

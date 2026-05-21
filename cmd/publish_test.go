@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/revanite-io/grcli/internal/hub"
+	"github.com/revanite-io/grcli/internal/registry"
 	"github.com/revanite-io/grcli/internal/source"
 )
 
@@ -153,12 +154,17 @@ func TestResolveTargetURL(t *testing.T) {
 		AuthorID: "my-team",
 	}
 
-	t.Run("url drives discovery and normalizes scheme + trailing slash off the registry host", func(t *testing.T) {
+	t.Run("url drives discovery, keeps the dial scheme, normalizes at composition", func(t *testing.T) {
 		// Adversarial response: scheme included AND trailing slash, two
 		// real malformations a hub operator can produce by setting
-		// HUB_OCI_PUBLIC_URL = "https://registry.grc.store/". Both must
-		// be normalized away — the printed Reference and the SLSA
-		// provenance Registry field want a bare host.
+		// HUB_OCI_PUBLIC_URL = "https://registry.grc.store/".
+		//
+		// registryHost is the oras dial target, so it KEEPS the advertised
+		// scheme — newRemoteRepo derives PlainHTTP from it, and stripping
+		// http:// here would force HTTPS against a plain-HTTP zot. The
+		// bare-host guarantee for cosign / the printed Reference / SLSA
+		// provenance is enforced where those are composed, via
+		// NormalizeRegistryHost (which also trims the trailing slash).
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(`{"registry_url":"https://discovered.example/","hub_url":"https://hub.example","api_version":"v1"}`))
 		}))
@@ -172,8 +178,10 @@ func TestResolveTargetURL(t *testing.T) {
 
 		got, err := resolveTarget(context.Background(), v, loaded)
 		require.NoError(t, err)
-		require.Equal(t, "discovered.example", got.registryHost,
-			"registry host must be bare (no scheme, no trailing slash) for cosign and OCI reference composition")
+		require.Equal(t, "https://discovered.example/", got.registryHost,
+			"registryHost is the dial target — the advertised scheme must survive for PlainHTTP routing")
+		require.Equal(t, "discovered.example", registry.NormalizeRegistryHost(got.registryHost),
+			"normalizing the dial target yields the bare host used for cosign and OCI reference composition")
 	})
 
 	t.Run("url plus explicit registry is a conflict", func(t *testing.T) {

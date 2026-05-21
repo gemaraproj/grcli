@@ -39,6 +39,10 @@ type Options struct {
 	KeyPath string
 	// Reference is the full <registry>/<repository>:<tag> to sign.
 	Reference string
+	// PlainHTTP signals the registry speaks plain HTTP (a local dev zot),
+	// so cosign needs --allow-http-registry to push the signature instead
+	// of defaulting to HTTPS. Off for production HTTPS registries.
+	PlainHTTP bool
 }
 
 // Sign attempts to attach a cosign signature to the pushed manifest.
@@ -75,7 +79,7 @@ func Sign(ctx context.Context, opts Options) (*Result, error) {
 				Reason: "GITHUB_ACTIONS=true but ACTIONS_ID_TOKEN_REQUEST_TOKEN unset — set `permissions: id-token: write` in the workflow",
 			}, nil
 		}
-		args := append([]string{"sign", "--yes"}, registryCredArgs()...)
+		args := append([]string{"sign", "--yes"}, registryFlags(opts)...)
 		args = append(args, opts.Reference)
 		if err := runCosign(ctx, args...); err != nil {
 			return nil, fmt.Errorf("cosign keyless sign: %w", err)
@@ -84,7 +88,7 @@ func Sign(ctx context.Context, opts Options) (*Result, error) {
 	}
 
 	if opts.KeyPath != "" {
-		args := append([]string{"sign", "--yes", "--key", opts.KeyPath}, registryCredArgs()...)
+		args := append([]string{"sign", "--yes", "--key", opts.KeyPath}, registryFlags(opts)...)
 		args = append(args, opts.Reference)
 		if err := runCosign(ctx, args...); err != nil {
 			return nil, fmt.Errorf("cosign key sign: %w", err)
@@ -127,4 +131,15 @@ func registryCredArgs() []string {
 		return []string{"--registry-token", t}
 	}
 	return nil
+}
+
+// registryFlags is the full set of cosign registry-auth/transport flags
+// for a sign run: the credential args plus --allow-http-registry when the
+// target is a plain-HTTP (local dev) registry.
+func registryFlags(opts Options) []string {
+	args := registryCredArgs()
+	if opts.PlainHTTP {
+		args = append(args, "--allow-http-registry")
+	}
+	return args
 }

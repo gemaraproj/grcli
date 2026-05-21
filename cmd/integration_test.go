@@ -127,8 +127,13 @@ func TestUnpack_FlagValidation(t *testing.T) {
 		wantSub string
 	}{
 		{
+			// Pass --url="" to defeat the bake-in default — otherwise
+			// the default would be a valid source and this test's
+			// premise ("no source set") wouldn't be reachable. The
+			// branch still exists for users who explicitly opt out of
+			// the default.
 			name:    "no-source-or-registry",
-			args:    []string{"unpack", "--tag", "1.0.0"},
+			args:    []string{"unpack", "--tag", "1.0.0", "--url", ""},
 			wantSub: "either --source, --registry, or --url is required",
 		},
 		{
@@ -160,6 +165,63 @@ func TestUnpack_FlagValidation(t *testing.T) {
 			require.Contains(t, err.Error(), tc.wantSub)
 		})
 	}
+}
+
+// TestPublishPositionalFile_Roundtrip mirrors the single-policy
+// roundtrip but passes the input file as a positional argument instead
+// of via -f. Same assertions as the -f path — the goal is to prove the
+// positional surface is wired all the way through to the bundle output,
+// not to re-test the bundle internals.
+func TestPublishPositionalFile_Roundtrip(t *testing.T) {
+	workdir := isolatedWorkdir(t)
+	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
+	layout := filepath.Join(workdir, "layout")
+
+	publishOut := runRoot(t, "publish", "--dry-run", "--output", layout, input)
+	require.Contains(t, publishOut, "dry-run: wrote bundle to oci:"+layout+":1.0.0")
+	require.Contains(t, publishOut, "artifact: Policy/roundtrip-policy")
+}
+
+func TestPublish_MixingFlagAndPositional_Errors(t *testing.T) {
+	workdir := isolatedWorkdir(t)
+	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
+	layout := filepath.Join(workdir, "layout")
+
+	_, err := runRootExpectErr(t, "publish", "--dry-run", "--output", layout, "-f", input, input)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not both")
+}
+
+// TestDefaultURL_AppliesWhenUnset locks in the user-visible behavior
+// that grcli ships with hub.grc.store as the default --url target.
+// Driven through the publish command's flag definition rather than
+// resolveTarget directly so we catch a regression if the default is
+// silently dropped from the cobra flag spec.
+func TestDefaultURL_AppliesWhenUnset(t *testing.T) {
+	root := newRootCmd()
+	pub, _, err := root.Find([]string{"publish"})
+	require.NoError(t, err)
+	urlFlag := pub.Flags().Lookup(flagURL)
+	require.NotNil(t, urlFlag, "publish must expose --url")
+	require.Equal(t, "https://hub.grc.store", urlFlag.DefValue,
+		"the bake-in default for --url must remain hub.grc.store until grcli has a private-hub story")
+}
+
+// TestSuppressDefaultURLIfExplicit_RegistryAlone covers the helper's
+// raison d'être: a user passing only --registry should NOT trip the
+// "--url and --registry conflict" branch, because the --url they're
+// supposedly conflicting with is just the bake-in default.
+func TestSuppressDefaultURLIfExplicit_RegistryAlone(t *testing.T) {
+	workdir := isolatedWorkdir(t)
+	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
+	layout := filepath.Join(workdir, "layout")
+	// --dry-run keeps this off the network — we're testing the flag
+	// suppression alone, not actual publication.
+	out := runRoot(t, "publish", "--dry-run", "--output", layout, "--registry", "registry.example", input)
+	// The publish path with --dry-run uses target.dryRun=true; the
+	// helper's job is to keep this from erroring with "conflicting
+	// flags".
+	require.Contains(t, out, "dry-run: wrote bundle to oci:"+layout+":1.0.0")
 }
 
 func TestUnpack_MissingTag_Errors(t *testing.T) {

@@ -51,7 +51,7 @@ Examples:
 
 	flags := cmd.Flags()
 	flags.String(flagSource, "", "OCI image layout directory (mutually exclusive with --registry / --url)")
-	flags.String(flagURL, "", "grc.store base URL (discovers the registry; replaces --registry)")
+	flags.String(flagURL, defaultURL, "grc.store base URL (discovers the registry; replaces --registry)")
 	flags.String(flagRegistry, "", "OCI registry hostname (mutually exclusive with --source)")
 	flags.String(flagRepository, "", "repository path within the registry (requires --registry or --url)")
 	flags.String(flagTag, "", "OCI tag to unpack (required)")
@@ -67,6 +67,7 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 	if err := v.BindPFlags(cmd.Flags()); err != nil {
 		return fmt.Errorf("binding flags: %w", err)
 	}
+	suppressDefaultURLIfExplicit(cmd, v, flagRegistry, flagSource)
 	ctx := cmd.Context()
 
 	source := v.GetString(flagSource)
@@ -93,11 +94,11 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 		if err != nil {
 			return fmt.Errorf("hub discovery: %w", err)
 		}
-		// Strip scheme + trailing slash so the printed refLabel and
-		// any downstream display string is a valid OCI reference.
-		// PlainHTTP routing for http:// registries happens inside
-		// newRemoteRepo via stripScheme.
-		registryHost = registry.NormalizeRegistryHost(d.RegistryURL)
+		// Keep the advertised scheme: registryHost is the oras dial
+		// target and newRemoteRepo derives PlainHTTP from it, so stripping
+		// http:// here would force HTTPS against a plain-HTTP zot. The
+		// display label below normalizes to a bare host.
+		registryHost = d.RegistryURL
 	}
 	if registryHost != "" && repository == "" {
 		return errors.New("--repository is required when --registry or --url is set")
@@ -112,8 +113,14 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 		unpacked, err = registry.UnpackLocal(ctx, source, tag)
 		refLabel = source
 	} else {
+		// ADR-0031: the registry requires a token even for reads. Reads
+		// are public, so mint an anonymous pull token from the hub (when
+		// we have its URL) and export it for the oras pull.
+		if _, terr := ensureRegistryToken(ctx, url, "", repository, []string{"pull"}); terr != nil {
+			return fmt.Errorf("fetching registry pull token: %w", terr)
+		}
 		unpacked, err = registry.UnpackRemote(ctx, registryHost, repository, tag)
-		refLabel = registryHost + "/" + repository
+		refLabel = registry.NormalizeRegistryHost(registryHost) + "/" + repository
 	}
 	if err != nil {
 		return err

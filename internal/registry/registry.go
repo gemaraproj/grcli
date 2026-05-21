@@ -67,7 +67,10 @@ func PushRemote(ctx context.Context, registryHost, repository, tag string, in Pa
 		ManifestDigest: desc.Digest.String(),
 		BodyDigest:     bodyDigest,
 		Tag:            tag,
-		Reference:      fmt.Sprintf("%s/%s:%s", registryHost, repository, tag),
+		// registryHost may carry an http(s):// scheme (it's the oras dial
+		// target, where the scheme drives PlainHTTP). The Reference is for
+		// display and cosign, which want a bare host — normalize it.
+		Reference: fmt.Sprintf("%s/%s:%s", NormalizeRegistryHost(registryHost), repository, tag),
 	}, nil
 }
 

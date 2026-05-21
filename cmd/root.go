@@ -38,6 +38,7 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       version,
+		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 		// Cobra does NOT chain PersistentPreRunE: if a subcommand defines
 		// its own, this one is silently skipped. If you add a subcommand
 		// with its own PersistentPreRunE, call loadConfig from there too
@@ -53,6 +54,8 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newUnpackCmd(v))
 	cmd.AddCommand(newValidateCmd(v))
 	cmd.AddCommand(newVerifyCmd(v))
+	cmd.AddCommand(newLoginCmd(v))
+	cmd.AddCommand(newLogoutCmd(v))
 	return cmd
 }
 

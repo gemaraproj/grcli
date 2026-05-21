@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/revanite-io/grcli/internal/auth"
 	"github.com/revanite-io/grcli/internal/digest"
 	"github.com/revanite-io/grcli/internal/hub"
 	"github.com/revanite-io/grcli/internal/provenance"
@@ -42,27 +43,32 @@ const (
 
 func newPublishCmd(v *viper.Viper) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "publish",
+		Use:   "publish [file...]",
 		Short: "Bundle one Gemara artifact with provenance and push it to grc.store",
-		Long: `Loads the file(s) provided via -f, verifies they describe a single
-artifact, attaches a SLSA-shaped provenance record, packs an OCI bundle,
-pushes it to the configured registry, optionally signs with cosign,
-and notifies the hub via POST /v1/bundles/sync.
+		Long: `Loads the file(s) describing a single artifact, attaches a SLSA-shaped
+provenance record, packs an OCI bundle, pushes it to the configured
+registry, optionally signs with cosign, and notifies the hub via
+POST /v1/bundles/sync.
+
+Files can be supplied as positional arguments (grcli publish a.yaml
+b.yaml) or via -f / --file. The two forms are mutually exclusive —
+mixing them is an error so neither silently wins.
 
 Use --dry-run to write the bundle to an OCI image layout on disk
 instead of touching any network.`,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runPublish(cmd, v)
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runPublish(cmd, v, args)
 		},
 	}
 
 	flags := cmd.Flags()
 	flags.StringSliceP(flagFile, "f", nil, "input file(s) describing one artifact (repeatable; comma-separated also accepted)")
-	flags.String(flagURL, "", "grc.store base URL, e.g. https://grc.store — discovers registry and replaces --registry + --hub-url")
+	flags.String(flagURL, defaultURL, "grc.store base URL — discovers registry and replaces --registry + --hub-url")
 	flags.String(flagRegistry, "", "OCI registry hostname, e.g. registry.grc.store")
 	flags.String(flagRepository, "", "repository path within the registry (default: <author.id>/<metadata.id>, slugified to [a-z0-9._-])")
 	flags.String(flagTag, "", "OCI tag (default: metadata.version)")
-	flags.String(flagHubURL, "", "grc.store hub base URL, e.g. https://grc.store")
+	flags.String(flagHubURL, "", "grc.store hub base URL, e.g. https://hub.grc.store")
 	flags.String(flagToken, "", "bearer token for the hub sync call (or GRCLI_TOKEN)")
 	flags.Bool(flagDryRun, false, "skip all network — emit OCI layout to --output instead")
 	flags.String(flagOutput, "grcli-out", "directory to write the OCI layout to when --dry-run")
@@ -96,16 +102,21 @@ type publishTarget struct {
 	output       string
 }
 
-func runPublish(cmd *cobra.Command, v *viper.Viper) error {
+func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 	if err := v.BindPFlags(cmd.Flags()); err != nil {
 		return fmt.Errorf("binding flags: %w", err)
 	}
+	suppressDefaultURLIfExplicit(cmd, v, flagRegistry, flagHubURL)
 	ctx := cmd.Context()
 	startedOn := time.Now().UTC()
 
-	files := expandCommas(v.GetStringSlice(flagFile))
+	flagFiles := expandCommas(v.GetStringSlice(flagFile))
+	files, err := mergeFileSources(flagFiles, positional)
+	if err != nil {
+		return err
+	}
 	if len(files) == 0 {
-		return errors.New("at least one --file is required")
+		return errors.New("no input files: pass paths positionally (grcli publish a.yaml) or via --file")
 	}
 
 	loaded, err := source.Load(ctx, files)
@@ -118,6 +129,23 @@ func runPublish(cmd *cobra.Command, v *viper.Viper) error {
 		return err
 	}
 
+	if !target.dryRun {
+		// Pre-flight: versions are immutable, so halt BEFORE packing or
+		// pushing if the coordinate is already taken (ADR-0031). This is
+		// what stops a re-publish from clobbering existing bytes in the
+		// registry — the registry would accept the overwrite before the
+		// hub's sync-time guard could reject it.
+		if err := checkVersionAvailable(ctx, v, target.repository, target.tag); err != nil {
+			return err
+		}
+		// The registry rejects unauthenticated writes. Mint a repo-scoped
+		// push token from the hub and export it so both the oras push and
+		// the cosign signature push authenticate.
+		if err := authenticatePush(ctx, v, target.repository); err != nil {
+			return err
+		}
+	}
+
 	predicate := provenance.Build(provenance.Input{
 		ToolVersion:    version,
 		StartedOn:      startedOn,
@@ -126,7 +154,7 @@ func runPublish(cmd *cobra.Command, v *viper.Viper) error {
 		ArtifactName:   loaded.Filename,
 		ArtifactDigest: digest.Bytes(loaded.Body),
 		SourceFiles:    loaded.SourceDigests,
-		Registry:       target.registryHost,
+		Registry:       registry.NormalizeRegistryHost(target.registryHost),
 		Repository:     target.repository,
 		Tag:            target.tag,
 	})
@@ -148,7 +176,8 @@ func runPublish(cmd *cobra.Command, v *viper.Viper) error {
 		return nil
 	}
 
-	return signAndNotify(ctx, v, target.repository, target.tag, result.Reference)
+	return signAndNotify(ctx, v, target.repository, target.tag, result.Reference,
+		strings.HasPrefix(target.registryHost, "http://"))
 }
 
 // resolveTarget merges --tag/--repository/--registry/--url/--dry-run with
@@ -183,13 +212,13 @@ func resolveTarget(ctx context.Context, v *viper.Viper, loaded *source.Loaded) (
 		if err != nil {
 			return publishTarget{}, fmt.Errorf("hub discovery: %w", err)
 		}
-		// Hub advertises registry_url with a scheme (https://...). The
-		// printed Reference, the SLSA provenance Registry field, and
-		// any other downstream user of registryHost want a bare host;
-		// only the oras-go path needs PlainHTTP routing, and that is
-		// handled inside newRemoteRepo. Normalize once here so every
-		// consumer sees the same value.
-		registryHost = registry.NormalizeRegistryHost(d.RegistryURL)
+		// Keep the scheme the hub advertises (http:// for a plain-HTTP
+		// dev registry, https:// for prod). registryHost is the oras dial
+		// target, and newRemoteRepo derives PlainHTTP from that scheme —
+		// stripping it here would force HTTPS against a plain-HTTP zot.
+		// Display/provenance/cosign consumers normalize to a bare host at
+		// their own call sites (PushResult.Reference, provenance below).
+		registryHost = d.RegistryURL
 	}
 
 	target := publishTarget{
@@ -232,11 +261,12 @@ func pushBundle(ctx context.Context, target publishTarget, in registry.PackInput
 // the cosign subprocess inside sign.Sign writes to os.Stdout/os.Stderr
 // directly; routing grcli's own status lines through a different writer
 // would create a misleading "I control the output" contract.
-func signAndNotify(ctx context.Context, v *viper.Viper, repository, tag, reference string) error {
+func signAndNotify(ctx context.Context, v *viper.Viper, repository, tag, reference string, plainHTTP bool) error {
 	signResult, err := sign.Sign(ctx, sign.Options{
 		Disabled:  v.GetBool(flagNoSign),
 		KeyPath:   v.GetString(flagCosignKey),
 		Reference: reference,
+		PlainHTTP: plainHTTP,
 	})
 	if err != nil {
 		return fmt.Errorf("sign: %w", err)
@@ -247,15 +277,16 @@ func signAndNotify(ctx context.Context, v *viper.Viper, repository, tag, referen
 		fmt.Fprintf(os.Stdout, "signed (%s)\n", signResult.Mode)
 	}
 
-	hubURL := v.GetString(flagHubURL)
-	if hubURL == "" {
-		hubURL = v.GetString(flagURL)
-	}
+	hubURL := publishHubURL(v)
 	if hubURL == "" {
 		fmt.Fprintln(os.Stdout, "skipping hub sync: --url (or --hub-url) not set")
 		return nil
 	}
-	syncResp, err := hub.New(hubURL, v.GetString(flagToken)).Sync(ctx, repository, tag)
+	token, err := resolveBearerToken(ctx, v)
+	if err != nil {
+		return err
+	}
+	syncResp, err := hub.New(hubURL, token).Sync(ctx, repository, tag)
 	if err != nil {
 		return fmt.Errorf("hub sync: %w", err)
 	}
@@ -266,6 +297,129 @@ func signAndNotify(ctx context.Context, v *viper.Viper, repository, tag, referen
 		strings.Join(syncResp.Types, ","),
 	)
 	return nil
+}
+
+// checkVersionAvailable is the publish pre-flight. Versions are immutable
+// (ADR-0031), so if the target coordinate already exists on the hub, halt
+// here — before packing, before any registry write. That prevents a
+// re-publish from clobbering the existing bytes in the registry (which
+// accepts the overwrite before the hub's sync-time guard can reject it).
+// No-op when there's no hub URL to ask (the deprecated --registry-only
+// path) or when --repository isn't a plain <namespace>/<id> coordinate;
+// in those cases the server-side sync guard remains the backstop.
+func checkVersionAvailable(ctx context.Context, v *viper.Viper, repository, tag string) error {
+	hubBaseURL := publishHubURL(v)
+	if hubBaseURL == "" {
+		return nil
+	}
+	ns, cid, ok := strings.Cut(repository, "/")
+	if !ok || ns == "" || cid == "" || strings.Contains(cid, "/") {
+		return nil
+	}
+	status, err := hub.New(hubBaseURL, "").VersionExists(ctx, ns, cid, tag)
+	if err != nil {
+		return fmt.Errorf("checking whether %s:%s already exists: %w", repository, tag, err)
+	}
+	switch status {
+	case hub.VersionPresent:
+		return fmt.Errorf("%s:%s already exists — versions are immutable; bump the version (or yank it first)", repository, tag)
+	case hub.VersionTombstoned:
+		return fmt.Errorf("%s:%s was yanked and cannot be republished — publish a new version", repository, tag)
+	default:
+		return nil
+	}
+}
+
+// publishHubURL returns the hub base URL for the publish run: --hub-url
+// when set (deprecated, explicit), otherwise --url. Empty means neither
+// was given, so there's no hub to sync with or mint a registry token from.
+func publishHubURL(v *viper.Viper) string {
+	if h := v.GetString(flagHubURL); h != "" {
+		return h
+	}
+	return v.GetString(flagURL)
+}
+
+// authenticatePush exports a registry push token (GRCLI_REGISTRY_TOKEN)
+// so the oras push and the cosign signature push authenticate to the
+// bearer-auth registry (ADR-0031). The hub grants push only to a
+// namespace owner or admin, so a push needs a hub login: when no explicit
+// registry credential override is present, we resolve the login token and
+// surface a clear `grcli login` hint if it's missing. No-op when there's
+// no hub URL (the deprecated --registry path falls back to the Docker
+// credential chain) or when a manual GRCLI_REGISTRY_* override is set.
+func authenticatePush(ctx context.Context, v *viper.Viper, repository string) error {
+	hubBaseURL := publishHubURL(v)
+	if hubBaseURL == "" {
+		return nil
+	}
+	if os.Getenv("GRCLI_REGISTRY_TOKEN") != "" ||
+		(os.Getenv("GRCLI_REGISTRY_USERNAME") != "" && os.Getenv("GRCLI_REGISTRY_PASSWORD") != "") {
+		return nil
+	}
+	login, err := resolveBearerToken(ctx, v)
+	if err != nil {
+		return fmt.Errorf("registry push needs a hub login to mint a push token: %w", err)
+	}
+	if _, err := ensureRegistryToken(ctx, hubBaseURL, login, repository, []string{"pull", "push"}); err != nil {
+		return fmt.Errorf("fetching registry push token: %w", err)
+	}
+	return nil
+}
+
+// resolveBearerToken wraps auth.Resolve with the publish command's
+// glue: pulls --token / GRCLI_TOKEN (merged by viper), re-runs hub
+// discovery to learn the OIDC issuer + client_id when --url is set
+// (cached after resolveTarget's earlier call, so this is a map lookup),
+// and instantiates the default credential store. Discovery failures
+// here are swallowed — the worst case is that auth.Resolve has no
+// store-key to look up and falls back to ErrNoToken, which prints the
+// same "run grcli login" hint a caller would already need.
+func resolveBearerToken(ctx context.Context, v *viper.Viper) (string, error) {
+	in := auth.ResolveInput{
+		ExplicitToken: v.GetString(flagToken),
+		Warn:          os.Stderr,
+	}
+	// Resolution order (ADR-0028): --token / GRCLI_TOKEN (captured above)
+	// > GitHub Actions OIDC > stored device-login creds. The CI step:
+	// when no explicit token is set and we're in a GHA job, fetch the
+	// workflow's OIDC token and present it directly — the hub validates it
+	// (ADR-0032) and maps the repo to its trusted-publisher namespace. No
+	// secret, no login. The audience is the hub URL (matches the hub's
+	// HUB_CI_OIDC_AUDIENCE). On any failure we fall through to the normal
+	// stored-credential path rather than hard-failing.
+	if in.ExplicitToken == "" && auth.InGitHubActions() {
+		if tok, err := auth.FetchGitHubActionsToken(ctx, publishHubURL(v)); err == nil && tok != "" {
+			return tok, nil
+		} else if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: GitHub Actions OIDC token unavailable, falling back: %v\n", err)
+		}
+	}
+	if url := v.GetString(flagURL); url != "" {
+		if d, err := hub.Discover(ctx, url); err == nil {
+			in.Issuer = d.OIDCIssuer
+			in.ClientID = d.OIDCCLIClientID
+		}
+	}
+	if store, err := auth.NewDefaultStore(); err == nil {
+		in.Store = store
+	}
+	return auth.Resolve(ctx, in)
+}
+
+// mergeFileSources combines files from -f / --file with files passed as
+// positional arguments. The two forms are mutually exclusive: mixing
+// them silently would let one form override or shadow the other on
+// scripted runs where both might be set unintentionally (e.g. a
+// .grcli.yaml config sets file: while the caller also types one in).
+func mergeFileSources(flagFiles, positional []string) ([]string, error) {
+	if len(flagFiles) > 0 && len(positional) > 0 {
+		return nil, errors.New("pass input files either positionally or via --file, not both")
+	}
+	if len(flagFiles) > 0 {
+		return flagFiles, nil
+	}
+	return expandCommas(positional), nil
 }
 
 // expandCommas lets users write `-f a.yaml,b.yaml` in addition to

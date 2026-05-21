@@ -5,3 +5,5 @@ coverage.out
 grcli-out/
 .grcli.yaml
 .env
+
+.claude/
