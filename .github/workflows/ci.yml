@@ -20,9 +20,9 @@ jobs:
       - run: make fmtcheck
       - run: make vet
       - run: make testcov
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@v9
         with:
-          version: v1.64.5
+          version: v2.12.2
   build:
     runs-on: ubuntu-latest
     steps:

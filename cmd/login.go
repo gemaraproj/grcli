@@ -58,7 +58,7 @@ func runLogin(cmd *cobra.Command, v *viper.Viper) error {
 		return fmt.Errorf("hub discovery: %w", err)
 	}
 	if disc.OIDCIssuer == "" || disc.OIDCCLIClientID == "" {
-		return fmt.Errorf("hub at %s does not advertise OIDC login — its discovery document has no oidc_issuer / oidc_cli_client_id fields, so `grcli login` has nothing to drive a device-grant flow against. Until the hub supports interactive login, you can still publish by passing a token via --token or GRCLI_TOKEN.", url)
+		return fmt.Errorf("hub at %s does not advertise OIDC login — its discovery document has no oidc_issuer / oidc_cli_client_id fields, so `grcli login` has nothing to drive a device-grant flow against. Until the hub supports interactive login, you can still publish by passing a token via --token or GRCLI_TOKEN", url)
 	}
 
 	meta, err := auth.FetchOIDCMetadata(ctx, disc.OIDCIssuer)
