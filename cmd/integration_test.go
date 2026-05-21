@@ -132,24 +132,21 @@ func TestUnpack_FlagValidation(t *testing.T) {
 			// premise ("no source set") wouldn't be reachable. The
 			// branch still exists for users who explicitly opt out of
 			// the default.
-			name:    "no-source-or-registry",
+			name:    "no-source-or-url",
 			args:    []string{"unpack", "--tag", "1.0.0", "--url", ""},
-			wantSub: "either --source, --registry, or --url is required",
+			wantSub: "either --source or --url is required",
 		},
 		{
-			name:    "both-source-and-registry",
-			args:    []string{"unpack", "--tag", "1.0.0", "--source", "/tmp/x", "--registry", "registry.example"},
+			name:    "both-source-and-url",
+			args:    []string{"unpack", "--tag", "1.0.0", "--source", "/tmp/x", "--url", "https://hub.example"},
 			wantSub: "mutually exclusive",
 		},
 		{
-			name:    "url-plus-registry-conflict",
-			args:    []string{"unpack", "--tag", "1.0.0", "--url", "https://hub.example", "--registry", "registry.example", "--repository", "r"},
-			wantSub: "conflicting flags: --url and --registry",
-		},
-		{
-			name:    "registry-without-repository",
-			args:    []string{"unpack", "--tag", "1.0.0", "--registry", "registry.example"},
-			wantSub: "--repository is required when --registry or --url is set",
+			// A bogus --url is fine: the --repository check runs before any
+			// hub round-trip, so this never dials the host.
+			name:    "url-without-repository",
+			args:    []string{"unpack", "--tag", "1.0.0", "--url", "https://hub.example"},
+			wantSub: "--repository is required when --url is set",
 		},
 		{
 			name:    "missing-tag",
@@ -207,21 +204,20 @@ func TestDefaultURL_AppliesWhenUnset(t *testing.T) {
 		"the bake-in default for --url must remain hub.grc.store until grcli has a private-hub story")
 }
 
-// TestSuppressDefaultURLIfExplicit_RegistryAlone covers the helper's
-// raison d'être: a user passing only --registry should NOT trip the
-// "--url and --registry conflict" branch, because the --url they're
-// supposedly conflicting with is just the bake-in default.
-func TestSuppressDefaultURLIfExplicit_RegistryAlone(t *testing.T) {
+// TestSuppressDefaultURLIfExplicit_SourceAlone covers the helper's
+// raison d'être: a user passing only --source should NOT trip the
+// "--source is mutually exclusive with --url" branch, because the --url
+// they're supposedly conflicting with is just the bake-in default.
+func TestSuppressDefaultURLIfExplicit_SourceAlone(t *testing.T) {
 	workdir := isolatedWorkdir(t)
 	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
 	layout := filepath.Join(workdir, "layout")
-	// --dry-run keeps this off the network — we're testing the flag
-	// suppression alone, not actual publication.
-	out := runRoot(t, "publish", "--dry-run", "--output", layout, "--registry", "registry.example", input)
-	// The publish path with --dry-run uses target.dryRun=true; the
-	// helper's job is to keep this from erroring with "conflicting
-	// flags".
-	require.Contains(t, out, "dry-run: wrote bundle to oci:"+layout+":1.0.0")
+	runRoot(t, "publish", "--dry-run", "-f", input, "--output", layout)
+
+	// unpack --source with no explicit --url must not error with the
+	// mutual-exclusion message; the helper suppresses the default --url.
+	out := runRoot(t, "unpack", "--source", layout, "--tag", "1.0.0", "--output", filepath.Join(workdir, "unpacked"))
+	require.Contains(t, out, "unpacked")
 }
 
 func TestUnpack_MissingTag_Errors(t *testing.T) {

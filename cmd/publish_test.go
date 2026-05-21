@@ -11,12 +11,19 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 
-	"github.com/revanite-io/grcli/internal/hub"
 	"github.com/revanite-io/grcli/internal/registry"
 	"github.com/revanite-io/grcli/internal/source"
 )
 
 func TestResolveTarget(t *testing.T) {
+	// Mock hub discovery: --url is now the only way to a registry, so the
+	// happy-path cases point --url at this server, which advertises
+	// registry.example as the discovered host.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"registry_url":"registry.example","hub_url":"https://hub.example","api_version":"v1"}`))
+	}))
+	defer srv.Close()
+
 	loadedFull := &source.Loaded{
 		Type:     "Policy",
 		ID:       "my-policy",
@@ -38,7 +45,7 @@ func TestResolveTarget(t *testing.T) {
 		{
 			name: "all-defaults-from-metadata",
 			flags: map[string]any{
-				flagRegistry: "registry.example",
+				flagURL: srv.URL,
 			},
 			loaded: loadedFull,
 			wantTarget: publishTarget{
@@ -51,8 +58,8 @@ func TestResolveTarget(t *testing.T) {
 		{
 			name: "flag-tag-overrides-metadata-version",
 			flags: map[string]any{
-				flagRegistry: "registry.example",
-				flagTag:      "override",
+				flagURL: srv.URL,
+				flagTag: "override",
 			},
 			loaded: loadedFull,
 			wantTarget: publishTarget{
@@ -65,7 +72,7 @@ func TestResolveTarget(t *testing.T) {
 		{
 			name: "flag-repository-overrides-default",
 			flags: map[string]any{
-				flagRegistry:   "registry.example",
+				flagURL:        srv.URL,
 				flagRepository: "custom/repo",
 			},
 			loaded: loadedFull,
@@ -92,24 +99,21 @@ func TestResolveTarget(t *testing.T) {
 			},
 		},
 		{
-			name:       "missing-registry-when-not-dry-run",
+			name:       "missing-url-when-not-dry-run",
 			flags:      map[string]any{},
 			loaded:     loadedFull,
-			wantErrSub: "--registry or --url is required",
+			wantErrSub: "--url is required",
 		},
 		{
-			name: "missing-tag",
-			flags: map[string]any{
-				flagRegistry: "registry.example",
-			},
+			name:       "missing-tag",
+			flags:      map[string]any{},
 			loaded:     loadedNoMetadata,
 			wantErrSub: "could not determine tag",
 		},
 		{
 			name: "missing-repository",
 			flags: map[string]any{
-				flagRegistry: "registry.example",
-				flagTag:      "1.0.0",
+				flagTag: "1.0.0",
 			},
 			loaded: &source.Loaded{
 				Type: "Policy",
@@ -143,9 +147,9 @@ func TestResolveTarget(t *testing.T) {
 	}
 }
 
-// TestResolveTargetURL covers the ADR-0026 discovery hook: --url alone
-// drives a discovery call, --url + --registry is a hard error, --url +
-// --hub-url is a hard error. Mock hub via httptest.
+// TestResolveTargetURL covers the ADR-0026 discovery hook: --url drives a
+// discovery call to resolve the registry, and --dry-run skips it. Mock
+// hub via httptest.
 func TestResolveTargetURL(t *testing.T) {
 	loaded := &source.Loaded{
 		Type:     "Policy",
@@ -184,50 +188,6 @@ func TestResolveTargetURL(t *testing.T) {
 			"normalizing the dial target yields the bare host used for cosign and OCI reference composition")
 	})
 
-	t.Run("url plus explicit registry is a conflict", func(t *testing.T) {
-		v := viper.New()
-		v.Set(flagURL, "https://hub.example")
-		v.Set(flagRegistry, "explicit.example")
-		v.SetDefault(flagOutput, "grcli-out")
-
-		_, err := resolveTarget(context.Background(), v, loaded)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "conflicting flags")
-		require.Contains(t, err.Error(), "--url and --registry")
-	})
-
-	t.Run("url plus explicit hub-url is a conflict", func(t *testing.T) {
-		v := viper.New()
-		v.Set(flagURL, "https://hub.example")
-		v.Set(flagHubURL, "https://other.example")
-		v.SetDefault(flagOutput, "grcli-out")
-
-		_, err := resolveTarget(context.Background(), v, loaded)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "conflicting flags")
-		require.Contains(t, err.Error(), "--url and --hub-url")
-	})
-
-	t.Run("explicit registry skips discovery entirely", func(t *testing.T) {
-		// httptest server that fails the test if it's hit — explicit
-		// --registry must not trigger discovery.
-		srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-			t.Error("discovery endpoint was hit despite explicit --registry")
-		}))
-		defer srv.Close()
-		// Don't set --url, set only --registry; discovery server only
-		// here to fail the test if accidentally called.
-		_ = srv.URL
-
-		v := viper.New()
-		v.Set(flagRegistry, "explicit.example")
-		v.SetDefault(flagOutput, "grcli-out")
-
-		got, err := resolveTarget(context.Background(), v, loaded)
-		require.NoError(t, err)
-		require.Equal(t, "explicit.example", got.registryHost)
-	})
-
 	t.Run("dry-run with url does not trigger discovery", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			t.Error("discovery endpoint hit during dry-run — should be skipped")
@@ -244,11 +204,6 @@ func TestResolveTargetURL(t *testing.T) {
 		require.True(t, got.dryRun)
 		require.Equal(t, "", got.registryHost, "dry-run should not need a registry")
 	})
-
-	// Belt-and-braces: any cache state left over from earlier subtests
-	// should not leak into other test files. Force a fresh state if the
-	// discover_test exports a reset (it's package-internal).
-	_ = hub.Discovery{} // keep the hub import alive in case future tests use it
 }
 
 func TestCIAudience(t *testing.T) {

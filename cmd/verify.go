@@ -18,8 +18,8 @@ import (
 	"github.com/revanite-io/grcli/internal/registry"
 )
 
-// Flag names specific to verify. flagRegistry / flagRepository / flagTag
-// / flagCosignKey are declared in publish.go.
+// Flag names specific to verify. flagURL / flagRepository / flagTag /
+// flagCosignKey are declared in publish.go.
 const (
 	flagCertIdentity   = "certificate-identity"
 	flagCertOIDCIssuer = "certificate-oidc-issuer"
@@ -52,12 +52,12 @@ Requires 'cosign' on PATH.
 
 Examples:
   # Key-based
-  grcli verify --registry registry.grc.store \
+  grcli verify --url https://hub.grc.store \
     --repository myorg/my-controls --tag 1.0.0 \
     --cosign-key /keys/cosign.pub
 
   # Keyless (GitHub Actions OIDC)
-  grcli verify --registry registry.grc.store \
+  grcli verify --url https://hub.grc.store \
     --repository myorg/my-controls --tag 1.0.0 \
     --certificate-identity   https://github.com/myorg/my-controls/.github/workflows/publish.yml@refs/heads/main \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com`,
@@ -67,15 +67,12 @@ Examples:
 	}
 
 	flags := cmd.Flags()
-	flags.String(flagURL, defaultURL, "grc.store base URL (discovers the registry; replaces --registry)")
-	flags.String(flagRegistry, "", "OCI registry hostname (required if --url is not set)")
+	flags.String(flagURL, defaultURL, "grc.store base URL (discovers the registry)")
 	flags.String(flagRepository, "", "repository path within the registry (required)")
 	flags.String(flagTag, "", "OCI tag to verify (required)")
 	flags.String(flagCosignKey, "", "cosign public key file (mutually exclusive with keyless flags)")
 	flags.String(flagCertIdentity, "", "expected signer identity (e.g., a GHA workflow URL)")
 	flags.String(flagCertOIDCIssuer, "", "expected OIDC issuer (e.g., https://token.actions.githubusercontent.com)")
-	// Deprecated: kept functional for one release cycle (ADR-0026).
-	_ = flags.MarkDeprecated(flagRegistry, "use --url to discover the registry from the hub")
 
 	return cmd
 }
@@ -84,7 +81,6 @@ func runVerify(cmd *cobra.Command, v *viper.Viper) error {
 	if err := v.BindPFlags(cmd.Flags()); err != nil {
 		return fmt.Errorf("binding flags: %w", err)
 	}
-	suppressDefaultURLIfExplicit(cmd, v, flagRegistry)
 	ctx := cmd.Context()
 
 	policy, err := resolveVerifyPolicy(ctx, v)
@@ -149,7 +145,6 @@ func (p verifyPolicy) cosignArgs() []string {
 }
 
 func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, error) {
-	registryHost := v.GetString(flagRegistry)
 	url := v.GetString(flagURL)
 	repository := v.GetString(flagRepository)
 	tag := v.GetString(flagTag)
@@ -157,26 +152,12 @@ func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, err
 	identity := v.GetString(flagCertIdentity)
 	issuer := v.GetString(flagCertOIDCIssuer)
 
-	if url != "" && registryHost != "" {
-		return verifyPolicy{}, errors.New("conflicting flags: --url and --registry; pick one")
-	}
-	if registryHost == "" && url != "" {
-		d, err := hub.Discover(ctx, url)
-		if err != nil {
-			return verifyPolicy{}, fmt.Errorf("hub discovery: %w", err)
-		}
-		registryHost = d.RegistryURL
-	}
-	// The registry value (discovered or --registry) may carry an http(s)://
-	// scheme. Record whether it's plain HTTP (so cosign gets
-	// --allow-http-registry for a local dev zot), then normalize to a bare
-	// host — cosign rejects a reference that includes a scheme.
-	plainHTTP := strings.HasPrefix(registryHost, "http://")
-	registryHost = registry.NormalizeRegistryHost(registryHost)
-
+	// Validate the cheap flag combinations before the network round-trip,
+	// so a missing --repository/--tag or bad trust material fails fast
+	// without a hub call.
 	switch {
-	case registryHost == "":
-		return verifyPolicy{}, errors.New("--registry or --url is required")
+	case url == "":
+		return verifyPolicy{}, errors.New("--url is required")
 	case repository == "":
 		return verifyPolicy{}, errors.New("--repository is required")
 	case tag == "":
@@ -192,6 +173,21 @@ func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, err
 		return verifyPolicy{}, errors.New("--cosign-key is mutually exclusive with --certificate-identity / --certificate-oidc-issuer")
 	case keylessMode && (identity == "" || issuer == ""):
 		return verifyPolicy{}, errors.New("keyless verification requires both --certificate-identity and --certificate-oidc-issuer")
+	}
+
+	d, err := hub.Discover(ctx, url)
+	if err != nil {
+		return verifyPolicy{}, fmt.Errorf("hub discovery: %w", err)
+	}
+	registryHost := d.RegistryURL
+	// The discovered registry value may carry an http(s):// scheme. Record
+	// whether it's plain HTTP (so cosign gets --allow-http-registry for a
+	// local dev zot), then normalize to a bare host — cosign rejects a
+	// reference that includes a scheme.
+	plainHTTP := strings.HasPrefix(registryHost, "http://")
+	registryHost = registry.NormalizeRegistryHost(registryHost)
+	if registryHost == "" {
+		return verifyPolicy{}, errors.New("hub discovery returned no registry URL")
 	}
 
 	return verifyPolicy{

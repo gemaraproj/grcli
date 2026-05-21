@@ -30,8 +30,8 @@ The bundle manifest, including any SLSA-shaped provenance record, is
 written alongside as bundle.json.
 
 The source can be a local OCI image layout (--source, the shape produced
-by 'grcli publish --dry-run') or a remote registry (--registry plus
---repository). Exactly one of --source / --registry must be set.
+by 'grcli publish --dry-run') or a remote registry discovered from the
+hub (--url plus --repository). Exactly one of --source / --url must be set.
 
 Registry auth flows through the same Docker credential chain and
 GRCLI_REGISTRY_USERNAME / GRCLI_REGISTRY_PASSWORD / GRCLI_REGISTRY_TOKEN
@@ -41,8 +41,8 @@ Examples:
   # From a local 'publish --dry-run' output
   grcli unpack --source ./grcli-out --tag 1.0.0
 
-  # From a remote registry
-  grcli unpack --registry registry.grc.store \
+  # From a remote registry (via hub discovery)
+  grcli unpack --url https://hub.grc.store \
     --repository myorg/my-controls --tag 1.0.0`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runUnpack(cmd, v)
@@ -50,14 +50,11 @@ Examples:
 	}
 
 	flags := cmd.Flags()
-	flags.String(flagSource, "", "OCI image layout directory (mutually exclusive with --registry / --url)")
-	flags.String(flagURL, defaultURL, "grc.store base URL (discovers the registry; replaces --registry)")
-	flags.String(flagRegistry, "", "OCI registry hostname (mutually exclusive with --source)")
-	flags.String(flagRepository, "", "repository path within the registry (requires --registry or --url)")
+	flags.String(flagSource, "", "OCI image layout directory (mutually exclusive with --url)")
+	flags.String(flagURL, defaultURL, "grc.store base URL (discovers the registry)")
+	flags.String(flagRepository, "", "repository path within the registry (requires --url)")
 	flags.String(flagTag, "", "OCI tag to unpack (required)")
 	flags.String(flagOutput, "grcli-unpacked", "directory to write extracted files to")
-	// Deprecated: kept functional for one release cycle (ADR-0026).
-	_ = flags.MarkDeprecated(flagRegistry, "use --url to discover the registry from the hub")
 
 	// Bind at RunE time, not here — see comment in newPublishCmd.
 	return cmd
@@ -67,11 +64,13 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 	if err := v.BindPFlags(cmd.Flags()); err != nil {
 		return fmt.Errorf("binding flags: %w", err)
 	}
-	suppressDefaultURLIfExplicit(cmd, v, flagRegistry, flagSource)
+	// A bare `grcli unpack --source ...` would otherwise collide with the
+	// bake-in --url default; suppress the default so --source alone is not
+	// read as "both --source and --url".
+	suppressDefaultURLIfExplicit(cmd, v, flagSource)
 	ctx := cmd.Context()
 
 	source := v.GetString(flagSource)
-	registryHost := v.GetString(flagRegistry)
 	url := v.GetString(flagURL)
 	repository := v.GetString(flagRepository)
 	tag := v.GetString(flagTag)
@@ -81,27 +80,10 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 		return errors.New("--tag is required")
 	}
 	switch {
-	case source == "" && registryHost == "" && url == "":
-		return errors.New("either --source, --registry, or --url is required")
-	case source != "" && (registryHost != "" || url != ""):
-		return errors.New("--source is mutually exclusive with --registry / --url")
-	case url != "" && registryHost != "":
-		return errors.New("conflicting flags: --url and --registry; pick one")
-	}
-
-	if registryHost == "" && url != "" {
-		d, err := hub.Discover(ctx, url)
-		if err != nil {
-			return fmt.Errorf("hub discovery: %w", err)
-		}
-		// Keep the advertised scheme: registryHost is the oras dial
-		// target and newRemoteRepo derives PlainHTTP from it, so stripping
-		// http:// here would force HTTPS against a plain-HTTP zot. The
-		// display label below normalizes to a bare host.
-		registryHost = d.RegistryURL
-	}
-	if registryHost != "" && repository == "" {
-		return errors.New("--repository is required when --registry or --url is set")
+	case source == "" && url == "":
+		return errors.New("either --source or --url is required")
+	case source != "" && url != "":
+		return errors.New("--source is mutually exclusive with --url")
 	}
 
 	var (
@@ -113,9 +95,21 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 		unpacked, err = registry.UnpackLocal(ctx, source, tag)
 		refLabel = source
 	} else {
+		if repository == "" {
+			return errors.New("--repository is required when --url is set")
+		}
+		d, derr := hub.Discover(ctx, url)
+		if derr != nil {
+			return fmt.Errorf("hub discovery: %w", derr)
+		}
+		// Keep the advertised scheme: registryHost is the oras dial
+		// target and newRemoteRepo derives PlainHTTP from it, so stripping
+		// http:// here would force HTTPS against a plain-HTTP zot. The
+		// display label below normalizes to a bare host.
+		registryHost := d.RegistryURL
 		// ADR-0031: the registry requires a token even for reads. Reads
-		// are public, so mint an anonymous pull token from the hub (when
-		// we have its URL) and export it for the oras pull.
+		// are public, so mint an anonymous pull token from the hub and
+		// export it for the oras pull.
 		if _, terr := ensureRegistryToken(ctx, url, "", repository, []string{"pull"}); terr != nil {
 			return fmt.Errorf("fetching registry pull token: %w", terr)
 		}

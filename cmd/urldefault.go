@@ -19,19 +19,17 @@ const defaultURL = "https://hub.grc.store"
 
 // suppressDefaultURLIfExplicit nulls out the bake-in `--url` value in
 // viper when the user has explicitly set one of the listed flags. This
-// keeps the existing "--url and --registry conflict" branches in each
-// subcommand from spuriously firing on the default. With this in place,
-// the legacy `grcli publish --registry private.example` invocation
-// keeps working unchanged — the explicit --registry signals "I want
-// private-registry mode, ignore the default" and the conflict branch
+// keeps a subcommand's "--url is mutually exclusive with X" branch from
+// spuriously firing on the default. With this in place, `grcli unpack
+// --source ./layout` keeps working unchanged — the explicit --source
+// signals "local mode, ignore the default --url" and the conflict branch
 // does not see two competing sources.
 //
 // No-op when the user passed --url explicitly: in that case both flags
 // are explicit and the conflict really IS a conflict, fire as before.
 //
 // Pass the flag names that are mutually exclusive with --url for the
-// given subcommand: publish has --registry and --hub-url; unpack adds
-// --source; verify uses --registry alone.
+// given subcommand: unpack uses --source.
 func suppressDefaultURLIfExplicit(cmd *cobra.Command, v *viper.Viper, conflictsWith ...string) {
 	if cmd.Flags().Changed(flagURL) {
 		return

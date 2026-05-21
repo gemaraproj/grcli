@@ -20,8 +20,8 @@ import (
 //   - a registry credential is already set explicitly (GRCLI_REGISTRY_TOKEN
 //     or the GRCLI_REGISTRY_USERNAME/PASSWORD pair, or a `docker login`
 //     the caller wants honored); manual overrides win, and
-//   - there is no hub base URL to ask (the deprecated --registry-only
-//     path), in which case grcli falls back to the Docker credential chain.
+//   - there is no hub base URL to ask (--url explicitly cleared), in which
+//     case grcli falls back to the Docker credential chain.
 //
 // bearer is the hub (Keycloak) access token from `grcli login`; pass ""
 // for an anonymous pull token. The returned token is also handed back so

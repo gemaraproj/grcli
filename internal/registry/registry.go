@@ -97,7 +97,7 @@ func UnpackRemote(ctx context.Context, registryHost, repository, tag string) (*b
 // no scheme, TLS is used (oras-go's default).
 func newRemoteRepo(registryHost, repository string) (*remote.Repository, error) {
 	if registryHost == "" {
-		return nil, errors.New("--registry is required")
+		return nil, errors.New("registry host is required (hub discovery returned none)")
 	}
 	if repository == "" {
 		return nil, errors.New("--repository is required")

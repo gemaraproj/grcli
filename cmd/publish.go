@@ -30,10 +30,8 @@ import (
 const (
 	flagFile       = "file"
 	flagURL        = "url"
-	flagRegistry   = "registry"
 	flagRepository = "repository"
 	flagTag        = "tag"
-	flagHubURL     = "hub-url"
 	flagToken      = "token"
 	flagDryRun     = "dry-run"
 	flagOutput     = "output"
@@ -64,21 +62,14 @@ instead of touching any network.`,
 
 	flags := cmd.Flags()
 	flags.StringSliceP(flagFile, "f", nil, "input file(s) describing one artifact (repeatable; comma-separated also accepted)")
-	flags.String(flagURL, defaultURL, "grc.store base URL — discovers registry and replaces --registry + --hub-url")
-	flags.String(flagRegistry, "", "OCI registry hostname, e.g. registry.grc.store")
+	flags.String(flagURL, defaultURL, "grc.store base URL — discovers the registry and is the hub sync target (ADR-0026)")
 	flags.String(flagRepository, "", "repository path within the registry (default: <author.id>/<metadata.id>, slugified to [a-z0-9._-])")
 	flags.String(flagTag, "", "OCI tag (default: metadata.version)")
-	flags.String(flagHubURL, "", "grc.store hub base URL, e.g. https://hub.grc.store")
 	flags.String(flagToken, "", "bearer token for the hub sync call (or GRCLI_TOKEN)")
 	flags.Bool(flagDryRun, false, "skip all network — emit OCI layout to --output instead")
 	flags.String(flagOutput, "grcli-out", "directory to write the OCI layout to when --dry-run")
 	flags.Bool(flagNoSign, false, "skip cosign signing even when material is available")
 	flags.String(flagCosignKey, "", "cosign key file for local signing (or COSIGN_KEY)")
-	// Deprecated: keep functional for one release cycle so existing
-	// scripts and CI configs keep working. --url drives discovery and
-	// is the preferred surface (ADR-0026).
-	_ = flags.MarkDeprecated(flagRegistry, "use --url to discover the registry from the hub")
-	_ = flags.MarkDeprecated(flagHubURL, "use --url instead — it is both the hub URL and the discovery source")
 
 	// Flags are bound to viper inside RunE (see runPublish) rather than
 	// here at construction time. Two subcommands sharing a viper instance
@@ -106,7 +97,6 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 	if err := v.BindPFlags(cmd.Flags()); err != nil {
 		return fmt.Errorf("binding flags: %w", err)
 	}
-	suppressDefaultURLIfExplicit(cmd, v, flagRegistry, flagHubURL)
 	ctx := cmd.Context()
 	startedOn := time.Now().UTC()
 
@@ -191,12 +181,10 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 		strings.HasPrefix(target.registryHost, "http://"))
 }
 
-// resolveTarget merges --tag/--repository/--registry/--url/--dry-run with
-// the metadata-derived defaults and validates the combination. When --url
-// is set without --registry, it fetches the registry hostname from the
-// hub's discovery endpoint (ADR-0026). Both --url and --registry set is
-// a hard error — silent precedence is a footgun for scripted users
-// mid-migration.
+// resolveTarget merges --tag/--repository/--url/--dry-run with the
+// metadata-derived defaults and validates the combination. --url drives
+// the registry hostname via the hub's discovery endpoint (ADR-0026);
+// --dry-run skips discovery since it never touches the network.
 func resolveTarget(ctx context.Context, v *viper.Viper, loaded *source.Loaded) (publishTarget, error) {
 	tag := cmp.Or(v.GetString(flagTag), loaded.Version)
 	if tag == "" {
@@ -208,17 +196,10 @@ func resolveTarget(ctx context.Context, v *viper.Viper, loaded *source.Loaded) (
 	}
 
 	url := v.GetString(flagURL)
-	explicitRegistry := v.GetString(flagRegistry)
-	switch {
-	case url != "" && explicitRegistry != "":
-		return publishTarget{}, errors.New("conflicting flags: --url and --registry; --url drives discovery, --registry pins explicitly — pick one")
-	case url != "" && v.GetString(flagHubURL) != "":
-		return publishTarget{}, errors.New("conflicting flags: --url and --hub-url; --url is both the hub URL and the discovery source — pick one")
-	}
-
-	registryHost := explicitRegistry
 	dryRun := v.GetBool(flagDryRun)
-	if registryHost == "" && url != "" && !dryRun {
+
+	var registryHost string
+	if url != "" && !dryRun {
 		d, err := hub.Discover(ctx, url)
 		if err != nil {
 			return publishTarget{}, fmt.Errorf("hub discovery: %w", err)
@@ -240,7 +221,7 @@ func resolveTarget(ctx context.Context, v *viper.Viper, loaded *source.Loaded) (
 		output:       v.GetString(flagOutput),
 	}
 	if !target.dryRun && target.registryHost == "" {
-		return publishTarget{}, errors.New("--registry or --url is required (use --dry-run to skip push)")
+		return publishTarget{}, errors.New("--url is required (use --dry-run to skip push)")
 	}
 	return target, nil
 }
@@ -290,7 +271,7 @@ func signAndNotify(ctx context.Context, v *viper.Viper, repository, tag, referen
 
 	hubURL := publishHubURL(v)
 	if hubURL == "" {
-		fmt.Fprintln(os.Stdout, "skipping hub sync: --url (or --hub-url) not set")
+		fmt.Fprintln(os.Stdout, "skipping hub sync: --url not set")
 		return nil
 	}
 	token, err := resolveBearerToken(ctx, v)
@@ -315,9 +296,9 @@ func signAndNotify(ctx context.Context, v *viper.Viper, repository, tag, referen
 // here — before packing, before any registry write. That prevents a
 // re-publish from clobbering the existing bytes in the registry (which
 // accepts the overwrite before the hub's sync-time guard can reject it).
-// No-op when there's no hub URL to ask (the deprecated --registry-only
-// path) or when --repository isn't a plain <namespace>/<id> coordinate;
-// in those cases the server-side sync guard remains the backstop.
+// No-op when there's no hub URL to ask (--url explicitly cleared) or when
+// --repository isn't a plain <namespace>/<id> coordinate; in those cases
+// the server-side sync guard remains the backstop.
 func checkVersionAvailable(ctx context.Context, v *viper.Viper, repository, tag string) error {
 	hubBaseURL := publishHubURL(v)
 	if hubBaseURL == "" {
@@ -356,13 +337,10 @@ func ciAudience(ctx context.Context, v *viper.Viper) string {
 	return publishHubURL(v)
 }
 
-// publishHubURL returns the hub base URL for the publish run: --hub-url
-// when set (deprecated, explicit), otherwise --url. Empty means neither
-// was given, so there's no hub to sync with or mint a registry token from.
+// publishHubURL returns the hub base URL for the publish run (--url).
+// Empty means --url was explicitly cleared, so there's no hub to sync
+// with or mint a registry token from.
 func publishHubURL(v *viper.Viper) string {
-	if h := v.GetString(flagHubURL); h != "" {
-		return h
-	}
 	return v.GetString(flagURL)
 }
 
@@ -372,8 +350,8 @@ func publishHubURL(v *viper.Viper) string {
 // namespace owner or admin, so a push needs a hub login: when no explicit
 // registry credential override is present, we resolve the login token and
 // surface a clear `grcli login` hint if it's missing. No-op when there's
-// no hub URL (the deprecated --registry path falls back to the Docker
-// credential chain) or when a manual GRCLI_REGISTRY_* override is set.
+// no hub URL (--url explicitly cleared) or when a manual GRCLI_REGISTRY_*
+// override is set.
 func authenticatePush(ctx context.Context, v *viper.Viper, repository string) error {
 	hubBaseURL := publishHubURL(v)
 	if hubBaseURL == "" {

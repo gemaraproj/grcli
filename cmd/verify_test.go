@@ -23,43 +23,34 @@ func TestVerify_FlagValidation(t *testing.T) {
 		wantSub string
 	}{
 		{
-			// Pass --url="" to defeat the bake-in default — otherwise
-			// the default would supply a registry source via discovery
-			// and this test's "no registry source" premise wouldn't be
-			// reachable.
-			name:    "missing-registry",
+			// Pass --url="" to defeat the bake-in default — otherwise the
+			// default would supply a registry source via discovery and this
+			// test's "no registry source" premise wouldn't be reachable.
+			name:    "missing-url",
 			args:    []string{"verify", "--repository", "r", "--tag", "t", "--cosign-key", "k", "--url", ""},
-			wantSub: "--registry or --url is required",
+			wantSub: "--url is required",
 		},
 		{
-			name: "url-plus-registry-conflict",
-			args: []string{
-				"verify",
-				"--url", "https://hub.example",
-				"--registry", "explicit.example",
-				"--repository", "r", "--tag", "t", "--cosign-key", "k",
-			},
-			wantSub: "conflicting flags: --url and --registry",
-		},
-		{
+			// A bogus --url is fine: flag validation runs before any hub
+			// round-trip, so these cases never dial the host.
 			name:    "missing-repository",
-			args:    []string{"verify", "--registry", "r", "--tag", "t", "--cosign-key", "k"},
+			args:    []string{"verify", "--url", "https://hub.example", "--tag", "t", "--cosign-key", "k"},
 			wantSub: "--repository is required",
 		},
 		{
 			name:    "missing-tag",
-			args:    []string{"verify", "--registry", "r", "--repository", "rep", "--cosign-key", "k"},
+			args:    []string{"verify", "--url", "https://hub.example", "--repository", "rep", "--cosign-key", "k"},
 			wantSub: "--tag is required",
 		},
 		{
 			name:    "no-trust-material",
-			args:    []string{"verify", "--registry", "r", "--repository", "rep", "--tag", "t"},
+			args:    []string{"verify", "--url", "https://hub.example", "--repository", "rep", "--tag", "t"},
 			wantSub: "either --cosign-key or --certificate-identity is required",
 		},
 		{
 			name: "both-key-and-keyless",
 			args: []string{
-				"verify", "--registry", "r", "--repository", "rep", "--tag", "t",
+				"verify", "--url", "https://hub.example", "--repository", "rep", "--tag", "t",
 				"--cosign-key", "k",
 				"--certificate-identity", "id",
 				"--certificate-oidc-issuer", "https://example.com",
@@ -69,7 +60,7 @@ func TestVerify_FlagValidation(t *testing.T) {
 		{
 			name: "keyless-missing-issuer",
 			args: []string{
-				"verify", "--registry", "r", "--repository", "rep", "--tag", "t",
+				"verify", "--url", "https://hub.example", "--repository", "rep", "--tag", "t",
 				"--certificate-identity", "id",
 			},
 			wantSub: "requires both --certificate-identity and --certificate-oidc-issuer",
@@ -77,7 +68,7 @@ func TestVerify_FlagValidation(t *testing.T) {
 		{
 			name: "keyless-missing-identity",
 			args: []string{
-				"verify", "--registry", "r", "--repository", "rep", "--tag", "t",
+				"verify", "--url", "https://hub.example", "--repository", "rep", "--tag", "t",
 				"--certificate-oidc-issuer", "https://example.com",
 			},
 			wantSub: "requires both --certificate-identity and --certificate-oidc-issuer",
@@ -115,19 +106,6 @@ func TestResolveVerifyPolicy_URL(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "discovered.example/team/artifact:1.0.0", policy.reference,
 			"cosign reference must be bare-host/repo:tag; a https:// prefix would cause cosign to reject the reference")
-	})
-
-	t.Run("url plus explicit registry is a conflict at policy resolution", func(t *testing.T) {
-		v := viper.New()
-		v.Set(flagURL, "https://hub.example")
-		v.Set(flagRegistry, "explicit.example")
-		v.Set(flagRepository, "team/artifact")
-		v.Set(flagTag, "1.0.0")
-		v.Set(flagCosignKey, "/keys/cosign.pub")
-
-		_, err := resolveVerifyPolicy(context.Background(), v)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "conflicting flags: --url and --registry")
 	})
 }
 
