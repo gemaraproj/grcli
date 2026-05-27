@@ -56,20 +56,6 @@ func TestResolveTarget(t *testing.T) {
 			},
 		},
 		{
-			name: "flag-tag-overrides-metadata-version",
-			flags: map[string]any{
-				flagURL: srv.URL,
-				flagTag: "override",
-			},
-			loaded: loadedFull,
-			wantTarget: publishTarget{
-				registryHost: "registry.example",
-				repository:   "my-team/my-policy",
-				tag:          "override",
-				output:       "grcli-out",
-			},
-		},
-		{
 			name: "flag-repository-overrides-default",
 			flags: map[string]any{
 				flagURL:        srv.URL,
@@ -111,12 +97,11 @@ func TestResolveTarget(t *testing.T) {
 			wantErrSub: "could not determine tag",
 		},
 		{
-			name: "missing-repository",
-			flags: map[string]any{
-				flagTag: "1.0.0",
-			},
+			name:  "missing-repository",
+			flags: map[string]any{},
 			loaded: &source.Loaded{
-				Type: "Policy",
+				Type:    "Policy",
+				Version: "1.0.0", // satisfies the tag check so resolveTarget reaches the repository check
 				// no ID, no AuthorID — defaultRepository returns ""
 			},
 			wantErrSub: "could not determine --repository",

@@ -26,7 +26,9 @@ import (
 )
 
 // Flag names are declared once so the compiler catches typos at every
-// viper.Get call site.
+// viper.Get call site. flagTag is NOT bound by publish (the OCI tag is
+// always metadata.version — ADR-0033) but the constant stays here
+// because unpack and verify in this same package still need it.
 const (
 	flagFile       = "file"
 	flagURL        = "url"
@@ -64,7 +66,6 @@ instead of touching any network.`,
 	flags.StringSliceP(flagFile, "f", nil, "input file(s) describing one artifact (repeatable; comma-separated also accepted)")
 	flags.String(flagURL, defaultURL, "grc.store base URL — discovers the registry and is the hub sync target (ADR-0026)")
 	flags.String(flagRepository, "", "repository path within the registry (default: <author.id>/<metadata.id>, slugified to [a-z0-9._-])")
-	flags.String(flagTag, "", "OCI tag (default: metadata.version)")
 	flags.String(flagToken, "", "bearer token for the hub sync call (or GRCLI_TOKEN)")
 	flags.Bool(flagDryRun, false, "skip all network — emit OCI layout to --output instead")
 	flags.String(flagOutput, "grcli-out", "directory to write the OCI layout to when --dry-run")
@@ -181,14 +182,20 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 		strings.HasPrefix(target.registryHost, "http://"))
 }
 
-// resolveTarget merges --tag/--repository/--url/--dry-run with the
+// resolveTarget merges --repository/--url/--dry-run with the
 // metadata-derived defaults and validates the combination. --url drives
 // the registry hostname via the hub's discovery endpoint (ADR-0026);
 // --dry-run skips discovery since it never touches the network.
+//
+// The OCI tag is always metadata.version — no override. ADR-0033 (in
+// grc.store-backend) made tag == metadata.version a hub-enforced
+// invariant; a --tag override could only ever produce a 422
+// tag_version_mismatch from the syncer, so the flag was removed rather
+// than left as a foot-gun.
 func resolveTarget(ctx context.Context, v *viper.Viper, loaded *source.Loaded) (publishTarget, error) {
-	tag := cmp.Or(v.GetString(flagTag), loaded.Version)
+	tag := loaded.Version
 	if tag == "" {
-		return publishTarget{}, errors.New("could not determine tag — set --tag or metadata.version")
+		return publishTarget{}, errors.New("could not determine tag — metadata.version is required")
 	}
 	repository := cmp.Or(v.GetString(flagRepository), defaultRepository(loaded.AuthorID, loaded.ID))
 	if repository == "" {
