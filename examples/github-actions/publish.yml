@@ -1,12 +1,16 @@
 # Sample GitHub Actions workflow: publish a grc.store catalog with grcli.
 #
-# Trusted publishing (ADR-0032) — no stored secret. The workflow's GitHub
-# OIDC token is the credential: the hub validates it directly and maps this
-# repository to the target namespace via a trusted-publisher binding.
+# === AUTH: NO GITHUB SECRET REQUIRED ===
+# Do NOT add `GRCLI_TOKEN`, a PAT, or any `secrets.*` reference to this
+# workflow. grcli uses the workflow's GitHub Actions OIDC token as its
+# credential (ADR-0032 trusted publishing). The `permissions: id-token:
+# write` below is the entire auth setup — that's what lets the runtime
+# mint an OIDC token grcli can present to the hub.
 #
-# Prerequisite (one-time, by an org admin on the hub): add this repository
-# (owner/repo) as a Trusted CI publisher for the namespace, optionally
-# pinned to a single git ref. Without that binding the hub returns 403.
+# Prerequisite (one-time, by an org admin on the hub — NOT in your repo):
+# add this repository (owner/repo) as a Trusted CI publisher for the
+# target namespace, optionally pinned to a single git ref. Without that
+# binding the hub returns 403; adding a GitHub secret will not fix it.
 #
 # Copy this into .github/workflows/ in your catalog repo and adjust the
 # file path, the --url, and the trigger to taste.

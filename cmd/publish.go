@@ -26,14 +26,14 @@ import (
 )
 
 // Flag names are declared once so the compiler catches typos at every
-// viper.Get call site. flagTag is NOT bound by publish (the OCI tag is
-// always metadata.version — ADR-0033) but the constant stays here
-// because unpack and verify in this same package still need it.
+// viper.Get call site. publish does not expose a tag/version flag —
+// the OCI tag is always metadata.version (ADR-0033). unpack and verify
+// take --version (see flagVersion in unpack.go) to address a published
+// bundle.
 const (
 	flagFile       = "file"
 	flagURL        = "url"
 	flagRepository = "repository"
-	flagTag        = "tag"
 	flagToken      = "token"
 	flagDryRun     = "dry-run"
 	flagOutput     = "output"
@@ -55,7 +55,15 @@ b.yaml) or via -f / --file. The two forms are mutually exclusive —
 mixing them is an error so neither silently wins.
 
 Use --dry-run to write the bundle to an OCI image layout on disk
-instead of touching any network.`,
+instead of touching any network.
+
+Auth in GitHub Actions: no GitHub secret, no --token, no GRCLI_TOKEN —
+when run inside a workflow with permissions: id-token: write, grcli
+mints a GitHub Actions OIDC token and presents it as the credential
+(ADR-0032 trusted publishing). The repo (owner/repo, optionally pinned
+to a ref) must be registered as a trusted publisher on the hub for the
+target namespace; a 403 means that binding is missing — not that you
+need to set a secret.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runPublish(cmd, v, args)
@@ -66,7 +74,7 @@ instead of touching any network.`,
 	flags.StringSliceP(flagFile, "f", nil, "input file(s) describing one artifact (repeatable; comma-separated also accepted)")
 	flags.String(flagURL, defaultURL, "grc.store base URL — discovers the registry and is the hub sync target (ADR-0026)")
 	flags.String(flagRepository, "", "repository path within the registry (default: <author.id>/<metadata.id>, slugified to [a-z0-9._-])")
-	flags.String(flagToken, "", "bearer token for the hub sync call (or GRCLI_TOKEN)")
+	flags.String(flagToken, "", "bearer token for the hub sync call (or GRCLI_TOKEN); leave unset in GitHub Actions — the workflow's OIDC token is used automatically (trusted publishing, no GitHub secret needed)")
 	flags.Bool(flagDryRun, false, "skip all network — emit OCI layout to --output instead")
 	flags.String(flagOutput, "grcli-out", "directory to write the OCI layout to when --dry-run")
 	flags.Bool(flagNoSign, false, "skip cosign signing even when material is available")

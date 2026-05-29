@@ -19,7 +19,13 @@ import (
 	"github.com/revanite-io/grcli/internal/registry"
 )
 
-const flagSource = "source"
+const (
+	flagSource = "source"
+	// flagVersion is the published artifact's metadata.version, which is
+	// also its OCI tag (ADR-0033 guarantees they're the same). Shared with
+	// verify.go.
+	flagVersion = "version"
+)
 
 func newUnpackCmd(v *viper.Viper) *cobra.Command {
 	cmd := &cobra.Command{
@@ -39,11 +45,11 @@ overrides as 'grcli publish'.
 
 Examples:
   # From a local 'publish --dry-run' output
-  grcli unpack --source ./grcli-out --tag 1.0.0
+  grcli unpack --source ./grcli-out --version 1.0.0
 
   # From a remote registry (via hub discovery)
   grcli unpack --url https://hub.grc.store \
-    --repository myorg/my-controls --tag 1.0.0`,
+    --repository myorg/my-controls --version 1.0.0`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runUnpack(cmd, v)
 		},
@@ -53,7 +59,7 @@ Examples:
 	flags.String(flagSource, "", "OCI image layout directory (mutually exclusive with --url)")
 	flags.String(flagURL, defaultURL, "grc.store base URL (discovers the registry)")
 	flags.String(flagRepository, "", "repository path within the registry (requires --url)")
-	flags.String(flagTag, "", "OCI tag to unpack (required)")
+	flags.String(flagVersion, "", "artifact version to unpack — the metadata.version of the published bundle (required)")
 	flags.String(flagOutput, "grcli-unpacked", "directory to write extracted files to")
 
 	// Bind at RunE time, not here — see comment in newPublishCmd.
@@ -73,11 +79,11 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 	source := v.GetString(flagSource)
 	url := v.GetString(flagURL)
 	repository := v.GetString(flagRepository)
-	tag := v.GetString(flagTag)
+	version := v.GetString(flagVersion)
 	output := v.GetString(flagOutput)
 
-	if tag == "" {
-		return errors.New("--tag is required")
+	if version == "" {
+		return errors.New("--version is required")
 	}
 	switch {
 	case source == "" && url == "":
@@ -92,7 +98,7 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 		err      error
 	)
 	if source != "" {
-		unpacked, err = registry.UnpackLocal(ctx, source, tag)
+		unpacked, err = registry.UnpackLocal(ctx, source, version)
 		refLabel = source
 	} else {
 		if repository == "" {
@@ -113,7 +119,7 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 		if _, terr := ensureRegistryToken(ctx, url, "", repository, []string{"pull"}); terr != nil {
 			return fmt.Errorf("fetching registry pull token: %w", terr)
 		}
-		unpacked, err = registry.UnpackRemote(ctx, registryHost, repository, tag)
+		unpacked, err = registry.UnpackRemote(ctx, registryHost, repository, version)
 		refLabel = registry.NormalizeRegistryHost(registryHost) + "/" + repository
 	}
 	if err != nil {
@@ -126,7 +132,7 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "unpacked %s:%s → %s (%d files, %d imports)\n",
-		refLabel, tag, output, len(unpacked.Files), len(unpacked.Imports))
+		refLabel, version, output, len(unpacked.Files), len(unpacked.Imports))
 	return writeBundle(unpacked, output, out)
 }
 

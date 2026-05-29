@@ -52,6 +52,14 @@ Some commands shell out to external tools:
 If you only inspect or validate bundles, you need no account or registry
 credentials.
 
+> **CI note (read before adding any GitHub secret):** `grcli publish`
+> in GitHub Actions authenticates via the workflow's GitHub OIDC token,
+> not a stored secret. You do **not** need to set `GRCLI_TOKEN`, a PAT,
+> or any `secrets.*` value. The only requirements are
+> `permissions: id-token: write` on the job and a one-time trusted-
+> publisher binding for `owner/repo` (and optionally a specific branch)
+> on the hub. See [Publishing from GitHub Actions](#publishing-from-github-actions).
+
 ## Usage
 
 Run `grcli <command> --help` for the full flag list. The typical flow is
@@ -77,12 +85,12 @@ grcli validate -f controls.yaml --spec /path/to/gemara
 grcli publish -f controls.yaml
 
 # Verify a published bundle (keyless example)
-grcli verify --repository myorg/my-controls --tag 1.0.0 \
+grcli verify --repository myorg/my-controls --version 1.0.0 \
   --certificate-identity https://github.com/myorg/my-controls/.github/workflows/publish.yml@refs/heads/main \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 # Unpack a bundle to disk
-grcli unpack --repository myorg/my-controls --tag 1.0.0 --output ./unpacked
+grcli unpack --repository myorg/my-controls --version 1.0.0 --output ./unpacked
 ```
 
 These default to the public hub at `https://hub.grc.store`; add `--url
@@ -94,16 +102,25 @@ fails *before* pushing, so nothing unsigned reaches the registry. Pass
 
 ## Publishing from GitHub Actions
 
-`grcli` publishes from CI with **no stored secret** — the workflow's
-GitHub OIDC token is the credential (trusted publishing). One-time
-setup: an org admin adds your repo (`owner/repo`) on the hub as a
-Trusted CI publisher for the namespace your bundles publish under (the
-`<author>/<name>` path); until then the hub returns 403.
+**`grcli` in CI needs no GitHub secret, no `GRCLI_TOKEN`, no
+`secrets.*` reference, no PAT.** Do not create one. Trusted publishing
+(ADR-0032) means the workflow's GitHub OIDC token is the credential —
+`grcli publish` mints it at runtime from the Actions OIDC endpoint
+that `permissions: id-token: write` enables. The hub validates the
+token's `iss` (GitHub) and `sub` (your repo/ref) against its
+trusted-publisher bindings.
+
+**One-time setup, done on the hub — not in your repo:** an org admin
+adds your repo (`owner/repo`, optionally pinned to a ref) on the hub
+as a Trusted CI publisher for the namespace your bundles publish
+under (the `<author>/<name>` path). Until that binding exists the hub
+returns 403; *adding a GitHub secret will not fix it.*
 
 ```yaml
 permissions:
   contents: read
   id-token: write   # OIDC token: hub auth + cosign keyless signing
+                    # this is the ONLY auth grcli needs in CI
 
 jobs:
   publish:
@@ -117,6 +134,8 @@ jobs:
           sudo install grcli /usr/local/bin/grcli
       - uses: sigstore/cosign-installer@v3
       - run: grcli publish -f controls.yaml
+        # no `env:` block, no `with: token:`, no secrets — id-token: write
+        # above is what makes this work
 ```
 
 cosign records the workflow URL as the signer identity

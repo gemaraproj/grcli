@@ -27,30 +27,30 @@ func TestVerify_FlagValidation(t *testing.T) {
 			// default would supply a registry source via discovery and this
 			// test's "no registry source" premise wouldn't be reachable.
 			name:    "missing-url",
-			args:    []string{"verify", "--repository", "r", "--tag", "t", "--cosign-key", "k", "--url", ""},
+			args:    []string{"verify", "--repository", "r", "--version", "t", "--cosign-key", "k", "--url", ""},
 			wantSub: "--url is required",
 		},
 		{
 			// A bogus --url is fine: flag validation runs before any hub
 			// round-trip, so these cases never dial the host.
 			name:    "missing-repository",
-			args:    []string{"verify", "--url", "https://hub.example", "--tag", "t", "--cosign-key", "k"},
+			args:    []string{"verify", "--url", "https://hub.example", "--version", "t", "--cosign-key", "k"},
 			wantSub: "--repository is required",
 		},
 		{
-			name:    "missing-tag",
+			name:    "missing-version",
 			args:    []string{"verify", "--url", "https://hub.example", "--repository", "rep", "--cosign-key", "k"},
-			wantSub: "--tag is required",
+			wantSub: "--version is required",
 		},
 		{
 			name:    "no-trust-material",
-			args:    []string{"verify", "--url", "https://hub.example", "--repository", "rep", "--tag", "t"},
+			args:    []string{"verify", "--url", "https://hub.example", "--repository", "rep", "--version", "t"},
 			wantSub: "either --cosign-key or --certificate-identity is required",
 		},
 		{
 			name: "both-key-and-keyless",
 			args: []string{
-				"verify", "--url", "https://hub.example", "--repository", "rep", "--tag", "t",
+				"verify", "--url", "https://hub.example", "--repository", "rep", "--version", "t",
 				"--cosign-key", "k",
 				"--certificate-identity", "id",
 				"--certificate-oidc-issuer", "https://example.com",
@@ -60,7 +60,7 @@ func TestVerify_FlagValidation(t *testing.T) {
 		{
 			name: "keyless-missing-issuer",
 			args: []string{
-				"verify", "--url", "https://hub.example", "--repository", "rep", "--tag", "t",
+				"verify", "--url", "https://hub.example", "--repository", "rep", "--version", "t",
 				"--certificate-identity", "id",
 			},
 			wantSub: "requires both --certificate-identity and --certificate-oidc-issuer",
@@ -68,7 +68,7 @@ func TestVerify_FlagValidation(t *testing.T) {
 		{
 			name: "keyless-missing-identity",
 			args: []string{
-				"verify", "--url", "https://hub.example", "--repository", "rep", "--tag", "t",
+				"verify", "--url", "https://hub.example", "--repository", "rep", "--version", "t",
 				"--certificate-oidc-issuer", "https://example.com",
 			},
 			wantSub: "requires both --certificate-identity and --certificate-oidc-issuer",
@@ -99,7 +99,7 @@ func TestResolveVerifyPolicy_URL(t *testing.T) {
 		v := viper.New()
 		v.Set(flagURL, srv.URL)
 		v.Set(flagRepository, "team/artifact")
-		v.Set(flagTag, "1.0.0")
+		v.Set(flagVersion, "1.0.0")
 		v.Set(flagCosignKey, "/keys/cosign.pub")
 
 		policy, err := resolveVerifyPolicy(context.Background(), v)

@@ -18,8 +18,8 @@ import (
 	"github.com/revanite-io/grcli/internal/registry"
 )
 
-// Flag names specific to verify. flagURL / flagRepository / flagTag /
-// flagCosignKey are declared in publish.go.
+// Flag names specific to verify. flagURL / flagRepository /
+// flagCosignKey are declared in publish.go; flagVersion in unpack.go.
 const (
 	flagCertIdentity   = "certificate-identity"
 	flagCertOIDCIssuer = "certificate-oidc-issuer"
@@ -53,12 +53,12 @@ Requires 'cosign' on PATH.
 Examples:
   # Key-based
   grcli verify --url https://hub.grc.store \
-    --repository myorg/my-controls --tag 1.0.0 \
+    --repository myorg/my-controls --version 1.0.0 \
     --cosign-key /keys/cosign.pub
 
   # Keyless (GitHub Actions OIDC)
   grcli verify --url https://hub.grc.store \
-    --repository myorg/my-controls --tag 1.0.0 \
+    --repository myorg/my-controls --version 1.0.0 \
     --certificate-identity   https://github.com/myorg/my-controls/.github/workflows/publish.yml@refs/heads/main \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -69,7 +69,7 @@ Examples:
 	flags := cmd.Flags()
 	flags.String(flagURL, defaultURL, "grc.store base URL (discovers the registry)")
 	flags.String(flagRepository, "", "repository path within the registry (required)")
-	flags.String(flagTag, "", "OCI tag to verify (required)")
+	flags.String(flagVersion, "", "artifact version to verify — the metadata.version of the published bundle (required)")
 	flags.String(flagCosignKey, "", "cosign public key file (mutually exclusive with keyless flags)")
 	flags.String(flagCertIdentity, "", "expected signer identity (e.g., a GHA workflow URL)")
 	flags.String(flagCertOIDCIssuer, "", "expected OIDC issuer (e.g., https://token.actions.githubusercontent.com)")
@@ -147,21 +147,21 @@ func (p verifyPolicy) cosignArgs() []string {
 func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, error) {
 	url := v.GetString(flagURL)
 	repository := v.GetString(flagRepository)
-	tag := v.GetString(flagTag)
+	version := v.GetString(flagVersion)
 	keyPath := v.GetString(flagCosignKey)
 	identity := v.GetString(flagCertIdentity)
 	issuer := v.GetString(flagCertOIDCIssuer)
 
 	// Validate the cheap flag combinations before the network round-trip,
-	// so a missing --repository/--tag or bad trust material fails fast
+	// so a missing --repository/--version or bad trust material fails fast
 	// without a hub call.
 	switch {
 	case url == "":
 		return verifyPolicy{}, errors.New("--url is required")
 	case repository == "":
 		return verifyPolicy{}, errors.New("--repository is required")
-	case tag == "":
-		return verifyPolicy{}, errors.New("--tag is required")
+	case version == "":
+		return verifyPolicy{}, errors.New("--version is required")
 	}
 
 	keyMode := keyPath != ""
@@ -191,7 +191,7 @@ func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, err
 	}
 
 	return verifyPolicy{
-		reference: fmt.Sprintf("%s/%s:%s", registryHost, repository, tag),
+		reference: fmt.Sprintf("%s/%s:%s", registryHost, repository, version),
 		keyPath:   keyPath,
 		identity:  identity,
 		issuer:    issuer,

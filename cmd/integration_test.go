@@ -65,7 +65,7 @@ func TestPublishUnpackRoundtrip_SinglePolicy(t *testing.T) {
 	require.Contains(t, publishOut, "dry-run: wrote bundle to oci:"+layout+":1.0.0")
 	require.Contains(t, publishOut, "artifact: Policy/roundtrip-policy")
 
-	unpackOut := runRoot(t, "unpack", "--source", layout, "--tag", "1.0.0", "--output", unpacked)
+	unpackOut := runRoot(t, "unpack", "--source", layout, "--version", "1.0.0", "--output", unpacked)
 	require.Contains(t, unpackOut, "unpacked "+layout+":1.0.0")
 	require.Contains(t, unpackOut, "policy.yaml")
 	require.Contains(t, unpackOut, "bundle.json")
@@ -100,7 +100,7 @@ func TestPublishUnpackRoundtrip_MergedControlCatalog(t *testing.T) {
 	unpacked := filepath.Join(workdir, "unpacked")
 
 	runRoot(t, "publish", "--dry-run", "-f", aPath, "-f", bPath, "--output", layout)
-	runRoot(t, "unpack", "--source", layout, "--tag", "2.0.0", "--output", unpacked)
+	runRoot(t, "unpack", "--source", layout, "--version", "2.0.0", "--output", unpacked)
 
 	// Two source files get merged into a single control-catalog.yaml
 	// inside the bundle. The unpacked file should contain controls from
@@ -133,25 +133,25 @@ func TestUnpack_FlagValidation(t *testing.T) {
 			// branch still exists for users who explicitly opt out of
 			// the default.
 			name:    "no-source-or-url",
-			args:    []string{"unpack", "--tag", "1.0.0", "--url", ""},
+			args:    []string{"unpack", "--version", "1.0.0", "--url", ""},
 			wantSub: "either --source or --url is required",
 		},
 		{
 			name:    "both-source-and-url",
-			args:    []string{"unpack", "--tag", "1.0.0", "--source", "/tmp/x", "--url", "https://hub.example"},
+			args:    []string{"unpack", "--version", "1.0.0", "--source", "/tmp/x", "--url", "https://hub.example"},
 			wantSub: "mutually exclusive",
 		},
 		{
 			// A bogus --url is fine: the --repository check runs before any
 			// hub round-trip, so this never dials the host.
 			name:    "url-without-repository",
-			args:    []string{"unpack", "--tag", "1.0.0", "--url", "https://hub.example"},
+			args:    []string{"unpack", "--version", "1.0.0", "--url", "https://hub.example"},
 			wantSub: "--repository is required when --url is set",
 		},
 		{
-			name:    "missing-tag",
+			name:    "missing-version",
 			args:    []string{"unpack", "--source", "/tmp/x"},
-			wantSub: "--tag is required",
+			wantSub: "--version is required",
 		},
 	}
 	for _, tc := range cases {
@@ -216,17 +216,17 @@ func TestSuppressDefaultURLIfExplicit_SourceAlone(t *testing.T) {
 
 	// unpack --source with no explicit --url must not error with the
 	// mutual-exclusion message; the helper suppresses the default --url.
-	out := runRoot(t, "unpack", "--source", layout, "--tag", "1.0.0", "--output", filepath.Join(workdir, "unpacked"))
+	out := runRoot(t, "unpack", "--source", layout, "--version", "1.0.0", "--output", filepath.Join(workdir, "unpacked"))
 	require.Contains(t, out, "unpacked")
 }
 
-func TestUnpack_MissingTag_Errors(t *testing.T) {
+func TestUnpack_MissingVersion_Errors(t *testing.T) {
 	workdir := isolatedWorkdir(t)
 	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
 	layout := filepath.Join(workdir, "layout")
 	runRoot(t, "publish", "--dry-run", "-f", input, "--output", layout)
 
-	_, err := runRootExpectErr(t, "unpack", "--source", layout, "--tag", "does-not-exist", "--output", filepath.Join(workdir, "unpacked"))
+	_, err := runRootExpectErr(t, "unpack", "--source", layout, "--version", "does-not-exist", "--output", filepath.Join(workdir, "unpacked"))
 	require.Error(t, err)
 }
 
