@@ -54,6 +54,7 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newUnpackCmd(v))
 	cmd.AddCommand(newValidateCmd(v))
 	cmd.AddCommand(newVerifyCmd(v))
+	cmd.AddCommand(newVersionsCmd(v))
 	cmd.AddCommand(newLoginCmd(v))
 	cmd.AddCommand(newLogoutCmd(v))
 	return cmd

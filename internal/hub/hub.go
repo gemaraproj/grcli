@@ -91,7 +91,10 @@ func (c *Client) VersionExists(ctx context.Context, namespace, catalogID, versio
 		return VersionAbsent, err
 	}
 	defer resp.Body.Close() //nolint:errcheck
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return VersionAbsent, fmt.Errorf("reading version-check response from %s: %w", url, err)
+	}
 
 	switch resp.StatusCode {
 	case http.StatusOK:
@@ -101,7 +104,97 @@ func (c *Client) VersionExists(ctx context.Context, namespace, catalogID, versio
 	case http.StatusGone:
 		return VersionTombstoned, nil
 	default:
-		return VersionAbsent, fmt.Errorf("hub version check %s returned %d", url, resp.StatusCode)
+		// Same shape as GetCatalog's default branch (URL + status + body
+		// snippet) so an operator chasing a 5xx on either endpoint gets the
+		// same diagnostic surface.
+		return VersionAbsent, fmt.Errorf("hub version check %s returned %d: %s",
+			url, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+}
+
+// ErrCatalogNotFound wraps a hub 404 for a catalog coordinate.
+// ErrCatalogTombstoned wraps a hub 410 (the catalog was published and
+// later yanked — the coordinate stays permanently taken). Both are
+// exported so callers can errors.Is against them to distinguish each
+// hub-modeled outcome from a transport failure.
+var (
+	ErrCatalogNotFound   = errors.New("catalog not found")
+	ErrCatalogTombstoned = errors.New("catalog was yanked")
+)
+
+// Release is one published version of a catalog, as returned in the
+// releases[] array of GET /v1/catalogs/{ns}/{id}.
+type Release struct {
+	Version        string `json:"version"`
+	ManifestDigest string `json:"manifest_digest"`
+	PushedAt       string `json:"pushed_at"`
+}
+
+// Catalog mirrors the JSON returned by GET /v1/catalogs/{ns}/{id}.
+// Only the fields the CLI currently surfaces are typed; the hub may
+// add more without breaking this client.
+type Catalog struct {
+	Namespace            string    `json:"namespace"`
+	CatalogID            string    `json:"catalog_id"`
+	Type                 string    `json:"type"`
+	Category             string    `json:"category"`
+	Title                string    `json:"title"`
+	Summary              string    `json:"summary"`
+	AuthorName           string    `json:"author_name"`
+	LatestVersion        string    `json:"latest_version"`
+	LatestManifestDigest string    `json:"latest_manifest_digest"`
+	Releases             []Release `json:"releases"`
+}
+
+// GetCatalog fetches a catalog and its releases via
+// GET /v1/catalogs/{ns}/{id}. Reads are public, so no token is required.
+// Returns a wrapped ErrCatalogNotFound on 404 and ErrCatalogTombstoned
+// on 410 so callers can errors.Is against either to distinguish the
+// "no such catalog" and "yanked" cases from a transport failure.
+func (c *Client) GetCatalog(ctx context.Context, namespace, catalogID string) (*Catalog, error) {
+	if c.BaseURL == "" {
+		return nil, errors.New("hub base URL is required")
+	}
+	if namespace == "" || catalogID == "" {
+		return nil, errors.New("namespace and catalog id are required")
+	}
+	url := fmt.Sprintf("%s/v1/catalogs/%s/%s",
+		c.BaseURL,
+		neturl.PathEscape(namespace),
+		neturl.PathEscape(catalogID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("reading catalog response from %s: %w", url, err)
+	}
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		if len(body) == 0 {
+			return nil, fmt.Errorf("hub catalog lookup %s returned 200 with empty body", url)
+		}
+		out := &Catalog{}
+		if err := json.Unmarshal(body, out); err != nil {
+			return nil, fmt.Errorf("decoding catalog response: %w", err)
+		}
+		return out, nil
+	case http.StatusNotFound:
+		return nil, fmt.Errorf("%w: %s/%s", ErrCatalogNotFound, namespace, catalogID)
+	case http.StatusGone:
+		return nil, fmt.Errorf("%w: %s/%s", ErrCatalogTombstoned, namespace, catalogID)
+	default:
+		return nil, fmt.Errorf("hub catalog lookup %s returned %d: %s",
+			url, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 }
 
@@ -119,8 +212,8 @@ func (c *Client) Sync(ctx context.Context, repository, tag string) (*SyncRespons
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.BaseURL+"/v1/bundles/sync", bytes.NewReader(body))
+	url := c.BaseURL + "/v1/bundles/sync"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -134,9 +227,16 @@ func (c *Client) Sync(ctx context.Context, repository, tag string) (*SyncRespons
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
-	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	rb, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("reading sync response from %s: %w", url, err)
+	}
 	if resp.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("hub /v1/bundles/sync returned %d: %s", resp.StatusCode, strings.TrimSpace(string(rb)))
+		// Same shape as VersionExists/GetCatalog default branches (URL +
+		// status + body snippet) so an operator chasing a 5xx on any hub
+		// endpoint sees the same diagnostic surface.
+		return nil, fmt.Errorf("hub sync %s returned %d: %s",
+			url, resp.StatusCode, strings.TrimSpace(string(rb)))
 	}
 	out := &SyncResponse{}
 	if err := json.Unmarshal(rb, out); err != nil {

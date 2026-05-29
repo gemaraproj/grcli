@@ -232,13 +232,17 @@ func TestUnpack_MissingTag_Errors(t *testing.T) {
 
 // isolatedWorkdir chdirs into a fresh temp dir and points HOME +
 // XDG_CONFIG_HOME at it so any real ~/.grcli.yaml on the dev machine
-// can't influence the test's viper resolution.
+// can't influence the test's viper resolution. Also clears the
+// GRCLI_URL env var: viper's AutomaticEnv would otherwise pick up a
+// dev's exported value and silently override --url in tests that
+// exercise the "--url is required" path.
 func isolatedWorkdir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Chdir(dir)
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("GRCLI_URL", "")
 	return dir
 }
 
