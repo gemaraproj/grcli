@@ -5,7 +5,7 @@ A command-line tool for the GRC artifact registry at
 spec, packs it into a signed OCI bundle with SLSA-shaped provenance,
 publishes it to a registry, and verifies bundles you fetch back.
 
-## Install
+## Install or Upgrade
 
 Binaries are published as a public, signed, multi-platform OCI artifact
 at `ghcr.io/revanite-io/grcli` (linux, macOS, and Windows on amd64 and
