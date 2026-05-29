@@ -53,9 +53,15 @@ func TestVersionExists_UnexpectedStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := New(srv.URL, "").VersionExists(context.Background(), "ns", "id", "v1")
+	got, err := New(srv.URL, "").VersionExists(context.Background(), "ns", "id", "v1")
 	if err == nil {
 		t.Fatal("expected error on 500, got nil")
+	}
+	// Pin the returned status: a future refactor must not silently flip
+	// 5xx to VersionPresent — that would wrongly trip the "already
+	// exists" branch in publish's pre-flight.
+	if got != VersionAbsent {
+		t.Errorf("VersionExists on 500 = %v, want VersionAbsent", got)
 	}
 	msg := err.Error()
 	for _, want := range []string{srv.URL, "500", "upstream timeout from zot"} {
