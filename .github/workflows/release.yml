@@ -39,7 +39,8 @@ jobs:
 
       # oras >= 1.3 is required for --artifact-platform and
       # `oras manifest index create`.
-      - uses: oras-project/setup-oras@v1
+      # v2: https://github.com/oras-project/setup-oras/releases/tag/v2.0.0
+      - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
         with:
           version: 1.3.0
 

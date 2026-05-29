@@ -21,7 +21,8 @@ chmod +x grcli && sudo mv grcli /usr/local/bin/
 In GitHub Actions:
 
 ```yaml
-- uses: oras-project/setup-oras@v1
+# v2: https://github.com/oras-project/setup-oras/releases/tag/v2.0.0
+- uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
 - run: |
     oras pull ghcr.io/revanite-io/grcli:latest --platform linux/amd64
     sudo install grcli /usr/local/bin/grcli
@@ -109,7 +110,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: oras-project/setup-oras@v1
+      # v2: https://github.com/oras-project/setup-oras/releases/tag/v2.0.0
+      - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
       - run: |
           oras pull ghcr.io/revanite-io/grcli:latest --platform linux/amd64
           sudo install grcli /usr/local/bin/grcli
