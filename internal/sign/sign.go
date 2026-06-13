@@ -24,6 +24,20 @@ const (
 	ModeSkipped Mode = "skipped"
 )
 
+// FlagNewBundleFormat makes cosign store the signature as a Sigstore **bundle**
+// (media type application/vnd.dev.sigstore.bundle.v0.3+json) attached as an OCI
+// 1.1 referrer of the manifest, instead of the legacy tag-based `sha256-….sig`.
+// This converges grc.store on one signature format across artifact types: it is
+// the format the hub's plugin verifier already expects and that pvtr already
+// produces (ADR-0034 dec. 7, ADR-0035).
+//
+// It is EXPORTED so the verify side (cmd/verify.go) references the same constant
+// — a bundle-signed artifact is verified with `cosign verify --new-bundle-format`
+// and does NOT verify against the legacy `.sig` path (and vice versa), so sign
+// and verify MUST stay a matched pair. Sharing one constant makes that structural,
+// not coincidental.
+const FlagNewBundleFormat = "--new-bundle-format"
+
 // Result is what Sign returns to the caller for logging.
 type Result struct {
 	Mode   Mode
@@ -117,14 +131,14 @@ func Sign(ctx context.Context, opts Options) (*Result, error) {
 	// Preflight guarantees cosign is present and (GHA-with-id-token OR a
 	// key) is available. Prefer keyless in CI, mirroring the old order.
 	if os.Getenv("GITHUB_ACTIONS") == "true" {
-		args := append([]string{"sign", "--yes"}, registryFlags(opts)...)
+		args := append([]string{"sign", "--yes", FlagNewBundleFormat}, registryFlags(opts)...)
 		args = append(args, opts.Reference)
 		if err := runCosign(ctx, args...); err != nil {
 			return nil, fmt.Errorf("cosign keyless sign: %w", err)
 		}
 		return &Result{Mode: ModeKeyless}, nil
 	}
-	args := append([]string{"sign", "--yes", "--key", opts.KeyPath}, registryFlags(opts)...)
+	args := append([]string{"sign", "--yes", FlagNewBundleFormat, "--key", opts.KeyPath}, registryFlags(opts)...)
 	args = append(args, opts.Reference)
 	if err := runCosign(ctx, args...); err != nil {
 		return nil, fmt.Errorf("cosign key sign: %w", err)

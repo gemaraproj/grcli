@@ -87,6 +87,62 @@ func TestPreflight(t *testing.T) {
 	})
 }
 
+// recordingCosign installs a fake cosign that appends its args (one per line)
+// to a file, and returns that file's path. Lets a test assert the exact flags
+// grcli passes without a real registry.
+func recordingCosign(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args")
+	script := "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> " + argsFile + "; done\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "cosign"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write recording cosign: %v", err)
+	}
+	t.Setenv("PATH", dir)
+	return argsFile
+}
+
+// TestSignPassesNewBundleFormat pins that grcli signs with the Sigstore
+// bundle-as-referrer format (ADR-0035) in BOTH the keyless and key paths — the
+// format the hub's plugin verifier expects and pvtr already produces.
+func TestSignPassesNewBundleFormat(t *testing.T) {
+	t.Run("keyless", func(t *testing.T) {
+		argsFile := recordingCosign(t)
+		t.Setenv("GITHUB_ACTIONS", "true")
+		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "tok")
+		if _, err := Sign(context.Background(), Options{Reference: "reg/repo:1"}); err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+		got, err := os.ReadFile(argsFile)
+		if err != nil {
+			t.Fatalf("read args: %v", err)
+		}
+		if !strings.Contains(string(got), "--new-bundle-format") {
+			t.Errorf("keyless sign args missing --new-bundle-format; got:\n%s", got)
+		}
+	})
+
+	t.Run("key", func(t *testing.T) {
+		argsFile := recordingCosign(t)
+		t.Setenv("GITHUB_ACTIONS", "")
+		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
+		keyPath := filepath.Join(t.TempDir(), "cosign.key")
+		if err := os.WriteFile(keyPath, []byte("x"), 0o600); err != nil {
+			t.Fatalf("write key: %v", err)
+		}
+		if _, err := Sign(context.Background(), Options{Reference: "reg/repo:1", KeyPath: keyPath}); err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+		got, err := os.ReadFile(argsFile)
+		if err != nil {
+			t.Fatalf("read args: %v", err)
+		}
+		if !strings.Contains(string(got), "--new-bundle-format") {
+			t.Errorf("key sign args missing --new-bundle-format; got:\n%s", got)
+		}
+	})
+}
+
 func TestSignFailsClosed(t *testing.T) {
 	t.Run("--no-sign returns ModeSkipped without error", func(t *testing.T) {
 		cosignAbsent(t)

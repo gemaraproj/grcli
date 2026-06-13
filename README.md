@@ -100,6 +100,13 @@ Signing is required by default: if `cosign` isn't available, `publish`
 fails *before* pushing, so nothing unsigned reaches the registry. Pass
 `--no-sign` to deliberately opt out.
 
+Catalog signatures use the **Sigstore bundle format** (cosign's
+`--new-bundle-format`, attached as an OCI 1.1 referrer), which `grcli
+verify` always requests — so to verify a catalog manually use `cosign
+verify --new-bundle-format …`, not the bare `cosign verify` shown above
+for the grcli binary. Artifacts signed by an older grcli (the legacy
+`.sig` tag format) must be re-published to re-sign. Requires cosign ≥ 3.x.
+
 ## Publishing from GitHub Actions
 
 **`grcli` in CI needs no GitHub secret, no `GRCLI_TOKEN`, no

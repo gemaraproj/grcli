@@ -116,7 +116,7 @@ func TestVerifyPolicy_CosignArgs(t *testing.T) {
 			keyPath:   "/keys/cosign.pub",
 		}
 		require.Equal(t, []string{
-			"verify",
+			"verify", "--new-bundle-format",
 			"--key", "/keys/cosign.pub",
 			"reg.example/team/artifact:1.0.0",
 		}, p.cosignArgs())
@@ -128,7 +128,7 @@ func TestVerifyPolicy_CosignArgs(t *testing.T) {
 			issuer:    "https://token.actions.githubusercontent.com",
 		}
 		require.Equal(t, []string{
-			"verify",
+			"verify", "--new-bundle-format",
 			"--certificate-identity", "https://github.com/team/repo/.github/workflows/publish.yml@refs/heads/main",
 			"--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
 			"reg.example/team/artifact:1.0.0",

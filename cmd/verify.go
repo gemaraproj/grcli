@@ -16,6 +16,7 @@ import (
 
 	"github.com/revanite-io/grcli/internal/hub"
 	"github.com/revanite-io/grcli/internal/registry"
+	"github.com/revanite-io/grcli/internal/sign"
 )
 
 // Flag names specific to verify. flagURL / flagRepository /
@@ -34,6 +35,12 @@ shelling out to 'cosign verify'. The bundle must already be pushed to a
 registry — cosign signatures live at the registry layer, not in the
 bundle bytes, so verifying a local OCI layout from 'publish --dry-run'
 is not supported.
+
+Signatures use the Sigstore bundle format (cosign's --new-bundle-format),
+attached as an OCI 1.1 referrer, which this command always requests.
+Artifacts signed by an OLDER grcli — the legacy 'sha256-….sig' tag format —
+will NOT verify here; re-publish them to re-sign in the bundle format.
+Requires cosign >= 3.x on PATH.
 
 You must specify either --cosign-key (key-based verification, paired
 with publish's --cosign-key) or both --certificate-identity and
@@ -125,7 +132,12 @@ func (p verifyPolicy) modeDescription() string {
 }
 
 func (p verifyPolicy) cosignArgs() []string {
-	args := []string{"verify"}
+	// grcli signs with the Sigstore bundle format (bundle-as-OCI-referrer), so
+	// verification must expect it too. A bundle signature does not verify against
+	// the legacy `.sig` path; the two are a matched producer/consumer pair. The
+	// flag string is the SAME exported constant the sign side uses, so they can't
+	// silently drift (sign.FlagNewBundleFormat, ADR-0035).
+	args := []string{"verify", sign.FlagNewBundleFormat}
 	// cosign verify pulls the signature from the registry, which now
 	// requires a bearer token (ADR-0031). Unlike the oras path, the
 	// cosign subprocess can't read GRCLI_REGISTRY_TOKEN, so pass it
