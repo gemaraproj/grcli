@@ -345,8 +345,8 @@ func checkVersionAvailable(ctx context.Context, v *viper.Viper, repository, tag 
 // discovery omits it (an older hub, or one with CI publishing off).
 func ciAudience(ctx context.Context, v *viper.Viper) string {
 	if url := v.GetString(flagURL); url != "" {
-		if d, err := hub.Discover(ctx, url); err == nil && d.CIOIDCAudience != "" {
-			return d.CIOIDCAudience
+		if d, err := hub.Discover(ctx, url); err == nil && d.CIAudience != "" {
+			return d.CIAudience
 		}
 	}
 	return publishHubURL(v)

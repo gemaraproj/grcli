@@ -12,15 +12,9 @@ import (
 	neturl "net/url"
 	"strings"
 	"time"
-)
 
-// registryTokenResponse mirrors the JSON the hub's GET /v2/token endpoint
-// returns. The hub populates both token and access_token with the same
-// value (Docker Hub compatibility); we accept either.
-type registryTokenResponse struct {
-	Token       string `json:"token"`
-	AccessToken string `json:"access_token"`
-}
+	"github.com/revanite-io/grc-store-protocol/registrytoken"
+)
 
 // FetchRegistryToken exchanges a hub (Keycloak) bearer token for a
 // short-lived OCI Distribution token scoped to the given repository and
@@ -79,14 +73,11 @@ func FetchRegistryToken(ctx context.Context, hubBaseURL, bearer, repository stri
 			reqURL, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	var tr registryTokenResponse
+	var tr registrytoken.Response
 	if err := json.Unmarshal(body, &tr); err != nil {
 		return "", fmt.Errorf("decoding registry token from %s: %w", reqURL, err)
 	}
-	tok := tr.Token
-	if tok == "" {
-		tok = tr.AccessToken
-	}
+	tok := tr.BearerToken() // prefer token, fall back to access_token (shared helper)
 	if tok == "" {
 		return "", fmt.Errorf("hub registry-token endpoint %s returned no token", reqURL)
 	}

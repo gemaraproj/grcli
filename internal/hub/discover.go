@@ -12,26 +12,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/revanite-io/grc-store-protocol/discovery"
 )
 
-// Discovery mirrors the JSON shape served by the hub's GET
-// /.well-known/ext.grc-store endpoint (ADR-0026 on the backend side,
-// extended by ADR-0028 with the OIDC fields). The hub advertises its
-// paired OCI registry plus the Keycloak coordinates grcli's device-grant
-// login uses; the OIDC fields are optional — a hub that hasn't been
-// configured for device-grant just omits them, and grcli falls back to
-// requiring an explicit --token / GRCLI_TOKEN.
-type Discovery struct {
-	RegistryURL     string `json:"registry_url"`
-	HubURL          string `json:"hub_url"`
-	APIVersion      string `json:"api_version"`
-	OIDCIssuer      string `json:"oidc_issuer,omitempty"`
-	OIDCCLIClientID string `json:"oidc_cli_client_id,omitempty"`
-	// CIOIDCAudience is the audience grcli must request on its GitHub
-	// Actions OIDC token (ADR-0032). Preferring this over the bare hub
-	// URL keeps grcli's audience aligned with what the hub validates.
-	CIOIDCAudience string `json:"ci_audience,omitempty"`
-}
+// Discovery is the GET /.well-known/ext.grc-store document. It is aliased to the
+// shared wire-contract type (ADR-0035) — the same definition the hub serves and
+// pvtr consumes — so the three can't drift. The CI-audience field is named
+// CIAudience on the shared type (was CIOIDCAudience here).
+type Discovery = discovery.Document
 
 // wellKnownPath is appended to the user-supplied hub base URL. RFC
 // 8615 §3 'ext.' prefix avoids needing IANA registration.

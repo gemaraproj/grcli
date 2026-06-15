@@ -17,13 +17,14 @@ import (
 	neturl "net/url"
 	"strings"
 	"time"
+
+	// aliased: the shared package is named "sync" and would shadow stdlib sync.
+	protosync "github.com/revanite-io/grc-store-protocol/sync"
 )
 
-// SyncRequest mirrors the backend's syncRequest.
-type SyncRequest struct {
-	Repository string `json:"repository"`
-	Tag        string `json:"tag"`
-}
+// SyncRequest is the sync request body, aliased to the shared wire-contract type
+// (ADR-0035) so grcli and the hub can't drift on it.
+type SyncRequest = protosync.Request
 
 // SyncResponse mirrors the backend's syncResponse.
 type SyncResponse struct {

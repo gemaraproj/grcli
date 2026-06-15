@@ -165,8 +165,8 @@ func TestDiscover(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Discover error: %v", err)
 		}
-		if d.CIOIDCAudience != "https://hub.example/ci" {
-			t.Errorf("CIOIDCAudience = %q, want https://hub.example/ci", d.CIOIDCAudience)
+		if d.CIAudience != "https://hub.example/ci" {
+			t.Errorf("CIAudience = %q, want https://hub.example/ci", d.CIAudience)
 		}
 	})
 
@@ -181,8 +181,8 @@ func TestDiscover(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Discover error: %v", err)
 		}
-		if d.CIOIDCAudience != "" {
-			t.Errorf("CIOIDCAudience = %q, want empty when not advertised", d.CIOIDCAudience)
+		if d.CIAudience != "" {
+			t.Errorf("CIAudience = %q, want empty when not advertised", d.CIAudience)
 		}
 	})
 }
