@@ -18,23 +18,15 @@ import (
 	"strings"
 	"time"
 
-	// aliased: the shared package is named "sync" and would shadow stdlib sync.
-	protosync "github.com/revanite-io/grc-store-protocol/sync"
+	"github.com/revanite-io/grc-store-protocol/syncapi"
 )
 
-// SyncRequest is the sync request body, aliased to the shared wire-contract type
-// (ADR-0035) so grcli and the hub can't drift on it.
-type SyncRequest = protosync.Request
-
-// SyncResponse mirrors the backend's syncResponse.
-type SyncResponse struct {
-	Repository    string   `json:"repository"`
-	Tag           string   `json:"tag"`
-	ManifestEtag  string   `json:"manifest_etag"`
-	ArtifactCount int      `json:"artifact_count"`
-	NewCount      int      `json:"new_count"`
-	Types         []string `json:"types"`
-}
+// SyncRequest and SyncResponse are the sync request/reply, aliased to the shared
+// wire-contract types (ADR-0035) so grcli and the hub can't drift on them.
+type (
+	SyncRequest  = syncapi.Request
+	SyncResponse = syncapi.Response
+)
 
 // Client is the typed wrapper around the hub's HTTP API.
 type Client struct {
