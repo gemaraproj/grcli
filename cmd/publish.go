@@ -82,7 +82,7 @@ need to set a secret.`,
 	flags.String(flagOutput, "grcli-out", "directory to write the OCI layout to when --dry-run")
 	flags.Bool(flagNoSign, false, "skip cosign signing even when material is available")
 	flags.String(flagCosignKey, "", "cosign key file for local signing (or COSIGN_KEY)")
-	flags.String(flagLicense, "", "publication license as an SPDX expression (e.g. Apache-2.0, MIT OR Apache-2.0, LicenseRef-Revanite-Proprietary); stamped as the org.opencontainers.image.licenses OCI annotation (ADR-0036)")
+	flags.String(flagLicense, "", "REQUIRED: publication license as an SPDX expression (e.g. Apache-2.0, MIT OR Apache-2.0, LicenseRef-Revanite-Proprietary); stamped as the org.opencontainers.image.licenses OCI annotation. Publish fails before any network call if unset (ADR-0037)")
 
 	// Flags are bound to viper inside RunE (see runPublish) rather than
 	// here at construction time. Two subcommands sharing a viper instance
@@ -132,11 +132,11 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 		return err
 	}
 
-	// Strict license gate (ADR-0036 decision 4): grcli is the strict end.
-	// Validate and canonicalize BEFORE any pack/push — including the
-	// --dry-run path — so a malformed or unknown SPDX expression never
-	// produces OCI bytes (locally or in the registry). An empty --license
-	// stamps no annotation (pre-flag behavior).
+	// Strict license gate (ADR-0037 decision 1, tightening ADR-0036): grcli
+	// is the strict end. --license is now REQUIRED. Validate and canonicalize
+	// BEFORE any pack/push — including the --dry-run path — so a missing,
+	// malformed, or unknown SPDX expression never produces OCI bytes (locally
+	// or in the registry).
 	canonicalLicense, err := validatePublishLicense(v.GetString(flagLicense))
 	if err != nil {
 		return err
@@ -442,17 +442,19 @@ func resolveBearerToken(ctx context.Context, v *viper.Viper) (string, error) {
 	return auth.Resolve(ctx, in)
 }
 
-// validatePublishLicense runs the strict SPDX gate for --license (ADR-0036
-// decision 4: grcli is the strict end). An empty value is valid and yields an
-// empty canonical string — no annotation is stamped. A non-empty value must be
-// a well-formed SPDX expression whose every leaf id is known to the bundled
-// SPDX list; the returned string is the canonical SPDX spelling, used from here
-// on. The two failure modes are distinguished so the publisher knows whether
+// validatePublishLicense runs the strict SPDX gate for --license (ADR-0037
+// decision 1, tightening ADR-0036: grcli is the strict end). The flag is now
+// REQUIRED: an empty/whitespace-only value is an error — distinct from the
+// invalid-value message, because a missing flag and a malformed value are
+// different user mistakes. A supplied value must be a well-formed SPDX
+// expression whose every leaf id is known to the bundled SPDX list; the
+// returned string is the canonical SPDX spelling, used from here on. The two
+// invalid-value failure modes are distinguished so the publisher knows whether
 // they have a grammar error or a typo'd/unknown id.
 func validatePublishLicense(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "", nil
+		return "", errors.New("a publication license is required: pass --license with an SPDX expression (e.g. Apache-2.0, MIT OR Apache-2.0; see https://spdx.org/licenses) or a LicenseRef-… token for a custom/proprietary license (ADR-0037)")
 	}
 	canonical, err := spdx.Canonicalize(raw)
 	if err != nil {

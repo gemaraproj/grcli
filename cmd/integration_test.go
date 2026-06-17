@@ -62,7 +62,7 @@ func TestPublishUnpackRoundtrip_SinglePolicy(t *testing.T) {
 	layout := filepath.Join(workdir, "layout")
 	unpacked := filepath.Join(workdir, "unpacked")
 
-	publishOut := runRoot(t, "publish", "--dry-run", "-f", input, "--output", layout)
+	publishOut := runRoot(t, "publish", "--dry-run", "-f", input, "--output", layout, "--license", "Apache-2.0")
 	require.Contains(t, publishOut, "dry-run: wrote bundle to oci:"+layout+":1.0.0")
 	require.Contains(t, publishOut, "artifact: Policy/roundtrip-policy")
 
@@ -167,20 +167,57 @@ func TestPublish_License_Invalid_RejectedBeforePush(t *testing.T) {
 	}
 }
 
-// TestPublish_License_Omitted_NoAnnotation covers ADR-0036 decision 1's
-// "omitting it stamps no annotation": with no --license the manifest carries
-// no org.opencontainers.image.licenses annotation (existing behavior).
-func TestPublish_License_Omitted_NoAnnotation(t *testing.T) {
+// TestPublish_License_Omitted_RejectedBeforePush covers ADR-0037 decision 1:
+// --license is now REQUIRED. Omitting it aborts the publish — before any pack
+// or push, even under --dry-run — with the distinct "is required" error (NOT
+// the "invalid --license" malformed-value message) and writes NO OCI output.
+func TestPublish_License_Omitted_RejectedBeforePush(t *testing.T) {
 	workdir := isolatedWorkdir(t)
 	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
 	layout := filepath.Join(workdir, "layout")
 
-	runRoot(t, "publish", "--dry-run", "-f", input, "--output", layout)
+	_, err := runRootExpectErr(t, "publish", "--dry-run", "-f", input, "--output", layout)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "a publication license is required",
+		"a missing --license must produce the distinct required-license error")
+	require.NotContains(t, err.Error(), "invalid --license",
+		"a missing flag and a malformed value must read differently")
+
+	// No OCI bytes may have been written: the layout dir must not exist.
+	_, statErr := os.Stat(layout)
+	require.True(t, os.IsNotExist(statErr),
+		"a missing --license must abort before any OCI output is written")
+}
+
+// TestPublish_License_Whitespace_RejectedBeforePush confirms a
+// whitespace-only --license is treated as absent (the required-license
+// error), not as a malformed value.
+func TestPublish_License_Whitespace_RejectedBeforePush(t *testing.T) {
+	workdir := isolatedWorkdir(t)
+	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
+	layout := filepath.Join(workdir, "layout")
+
+	_, err := runRootExpectErr(t, "publish", "--dry-run", "-f", input, "--output", layout, "--license", "   ")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "a publication license is required")
+
+	_, statErr := os.Stat(layout)
+	require.True(t, os.IsNotExist(statErr))
+}
+
+// TestPublish_License_LicenseRef_Accepted confirms a LicenseRef- token (the
+// custom/proprietary escape hatch named in the required-license error and
+// ADR-0037) is accepted and stamped verbatim.
+func TestPublish_License_LicenseRef_Accepted(t *testing.T) {
+	workdir := isolatedWorkdir(t)
+	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
+	layout := filepath.Join(workdir, "layout")
+
+	runRoot(t, "publish", "--dry-run", "-f", input, "--output", layout, "--license", "LicenseRef-Revanite-Proprietary")
 
 	ann := readOCIManifestAnnotations(t, layout)
-	_, present := ann["org.opencontainers.image.licenses"]
-	require.False(t, present,
-		"omitting --license must leave the manifest with no license annotation")
+	require.Equal(t, "LicenseRef-Revanite-Proprietary", ann["org.opencontainers.image.licenses"],
+		"a LicenseRef- token must be accepted and stamped as the OCI license annotation")
 }
 
 func TestPublishUnpackRoundtrip_MergedControlCatalog(t *testing.T) {
@@ -190,7 +227,7 @@ func TestPublishUnpackRoundtrip_MergedControlCatalog(t *testing.T) {
 	layout := filepath.Join(workdir, "layout")
 	unpacked := filepath.Join(workdir, "unpacked")
 
-	runRoot(t, "publish", "--dry-run", "-f", aPath, "-f", bPath, "--output", layout)
+	runRoot(t, "publish", "--dry-run", "-f", aPath, "-f", bPath, "--output", layout, "--license", "Apache-2.0")
 	runRoot(t, "unpack", "--source", layout, "--version", "2.0.0", "--output", unpacked)
 
 	// Two source files get merged into a single control-catalog.yaml
@@ -265,7 +302,7 @@ func TestPublishPositionalFile_Roundtrip(t *testing.T) {
 	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
 	layout := filepath.Join(workdir, "layout")
 
-	publishOut := runRoot(t, "publish", "--dry-run", "--output", layout, input)
+	publishOut := runRoot(t, "publish", "--dry-run", "--output", layout, input, "--license", "Apache-2.0")
 	require.Contains(t, publishOut, "dry-run: wrote bundle to oci:"+layout+":1.0.0")
 	require.Contains(t, publishOut, "artifact: Policy/roundtrip-policy")
 }
@@ -303,7 +340,7 @@ func TestSuppressDefaultURLIfExplicit_SourceAlone(t *testing.T) {
 	workdir := isolatedWorkdir(t)
 	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
 	layout := filepath.Join(workdir, "layout")
-	runRoot(t, "publish", "--dry-run", "-f", input, "--output", layout)
+	runRoot(t, "publish", "--dry-run", "-f", input, "--output", layout, "--license", "Apache-2.0")
 
 	// unpack --source with no explicit --url must not error with the
 	// mutual-exclusion message; the helper suppresses the default --url.
@@ -315,7 +352,7 @@ func TestUnpack_MissingVersion_Errors(t *testing.T) {
 	workdir := isolatedWorkdir(t)
 	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
 	layout := filepath.Join(workdir, "layout")
-	runRoot(t, "publish", "--dry-run", "-f", input, "--output", layout)
+	runRoot(t, "publish", "--dry-run", "-f", input, "--output", layout, "--license", "Apache-2.0")
 
 	_, err := runRootExpectErr(t, "unpack", "--source", layout, "--version", "does-not-exist", "--output", filepath.Join(workdir, "unpacked"))
 	require.Error(t, err)
