@@ -16,6 +16,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/revanite-io/grc-store-protocol/spdx"
+
 	"github.com/revanite-io/grcli/internal/auth"
 	"github.com/revanite-io/grcli/internal/digest"
 	"github.com/revanite-io/grcli/internal/hub"
@@ -39,6 +41,7 @@ const (
 	flagOutput     = "output"
 	flagNoSign     = "no-sign"
 	flagCosignKey  = "cosign-key"
+	flagLicense    = "license"
 )
 
 func newPublishCmd(v *viper.Viper) *cobra.Command {
@@ -79,6 +82,7 @@ need to set a secret.`,
 	flags.String(flagOutput, "grcli-out", "directory to write the OCI layout to when --dry-run")
 	flags.Bool(flagNoSign, false, "skip cosign signing even when material is available")
 	flags.String(flagCosignKey, "", "cosign key file for local signing (or COSIGN_KEY)")
+	flags.String(flagLicense, "", "publication license as an SPDX expression (e.g. Apache-2.0, MIT OR Apache-2.0, LicenseRef-Revanite-Proprietary); stamped as the org.opencontainers.image.licenses OCI annotation (ADR-0036)")
 
 	// Flags are bound to viper inside RunE (see runPublish) rather than
 	// here at construction time. Two subcommands sharing a viper instance
@@ -124,6 +128,16 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 	}
 
 	target, err := resolveTarget(ctx, v, loaded)
+	if err != nil {
+		return err
+	}
+
+	// Strict license gate (ADR-0036 decision 4): grcli is the strict end.
+	// Validate and canonicalize BEFORE any pack/push — including the
+	// --dry-run path — so a malformed or unknown SPDX expression never
+	// produces OCI bytes (locally or in the registry). An empty --license
+	// stamps no annotation (pre-flag behavior).
+	canonicalLicense, err := validatePublishLicense(v.GetString(flagLicense))
 	if err != nil {
 		return err
 	}
@@ -176,6 +190,7 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 		GemaraVersion: loaded.GemaraVersion,
 		Body:          loaded.Body,
 		Provenance:    predicate,
+		License:       canonicalLicense,
 	}
 
 	result, err := pushBundle(ctx, target, packInput, cmd.OutOrStdout(), loaded.Type, loaded.ID)
@@ -425,6 +440,32 @@ func resolveBearerToken(ctx context.Context, v *viper.Viper) (string, error) {
 		in.Store = store
 	}
 	return auth.Resolve(ctx, in)
+}
+
+// validatePublishLicense runs the strict SPDX gate for --license (ADR-0036
+// decision 4: grcli is the strict end). An empty value is valid and yields an
+// empty canonical string — no annotation is stamped. A non-empty value must be
+// a well-formed SPDX expression whose every leaf id is known to the bundled
+// SPDX list; the returned string is the canonical SPDX spelling, used from here
+// on. The two failure modes are distinguished so the publisher knows whether
+// they have a grammar error or a typo'd/unknown id.
+func validatePublishLicense(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	canonical, err := spdx.Canonicalize(raw)
+	if err != nil {
+		switch {
+		case errors.Is(err, spdx.ErrUnknownID):
+			return "", fmt.Errorf("invalid --license %q: unknown SPDX id (%w) — check https://spdx.org/licenses or use a LicenseRef- token for a custom license", raw, err)
+		case errors.Is(err, spdx.ErrSyntax):
+			return "", fmt.Errorf("invalid --license %q: malformed SPDX expression (%w)", raw, err)
+		default:
+			return "", fmt.Errorf("invalid --license %q: %w", raw, err)
+		}
+	}
+	return canonical, nil
 }
 
 // mergeFileSources combines files from -f / --file with files passed as

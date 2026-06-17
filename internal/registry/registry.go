@@ -36,6 +36,12 @@ type PackInput struct {
 	GemaraVersion string
 	Body          []byte
 	Provenance    any // marshaled into bundle.Manifest.Metadata
+	// License is the canonical SPDX publication-license expression
+	// (ADR-0036). When non-empty it is stamped as the standard OCI
+	// manifest annotation org.opencontainers.image.licenses. Empty means
+	// no annotation. The caller (cmd/publish.go) is the strict gate: this
+	// value is already validated and canonicalized via spdx.Canonicalize.
+	License string
 }
 
 // PushResult reports what was published.
@@ -225,7 +231,17 @@ func pack(ctx context.Context, target oras.Target, tag string, in PackInput) (oc
 		}},
 	}
 
-	desc, err := bundle.Pack(ctx, target, b)
+	var packOpts []bundle.PackOption
+	if in.License != "" {
+		// Standard OCI carrier for the publication license (ADR-0036
+		// decision 2). Manifest-level annotation, set only when a license
+		// is declared so omitting --license leaves the manifest unchanged.
+		packOpts = append(packOpts, bundle.WithAnnotations(map[string]string{
+			ocispec.AnnotationLicenses: in.License,
+		}))
+	}
+
+	desc, err := bundle.Pack(ctx, target, b, packOpts...)
 	if err != nil {
 		return ocispec.Descriptor{}, "", fmt.Errorf("packing bundle: %w", err)
 	}

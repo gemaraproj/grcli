@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -90,6 +91,96 @@ func TestPublishUnpackRoundtrip_SinglePolicy(t *testing.T) {
 	require.True(t, ok, "manifest metadata.provenance is missing")
 	require.Contains(t, provenance, "buildDefinition")
 	require.Contains(t, provenance, "runDetails")
+}
+
+// TestPublish_License_Valid_StampsCanonicalAnnotation covers ADR-0036
+// decisions 1, 2, and 4 on the happy path: a valid --license (given in
+// non-canonical casing) is canonicalized and stamped as the standard OCI
+// manifest annotation org.opencontainers.image.licenses. --dry-run keeps it
+// off the network; we read the annotation back off the local OCI manifest.
+func TestPublish_License_Valid_StampsCanonicalAnnotation(t *testing.T) {
+	workdir := isolatedWorkdir(t)
+	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
+	layout := filepath.Join(workdir, "layout")
+
+	// Non-canonical input "apache-2.0" must come back canonicalized to
+	// "Apache-2.0" — proving the stamped value is spdx.Canonicalize's output,
+	// not the raw flag.
+	runRoot(t, "publish", "--dry-run", "-f", input, "--output", layout, "--license", "apache-2.0")
+
+	ann := readOCIManifestAnnotations(t, layout)
+	require.Equal(t, "Apache-2.0", ann["org.opencontainers.image.licenses"],
+		"the canonical SPDX expression must be stamped as the standard OCI license annotation")
+}
+
+// TestPublish_License_CompoundExpression confirms a compound SPDX expression
+// round-trips canonicalized (operator casing normalized) into the annotation.
+func TestPublish_License_CompoundExpression(t *testing.T) {
+	workdir := isolatedWorkdir(t)
+	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
+	layout := filepath.Join(workdir, "layout")
+
+	// SPDX operators are case-sensitive uppercase; the leaf ids are not, so
+	// "mit" canonicalizes to "MIT" while "OR" must already be uppercase.
+	runRoot(t, "publish", "--dry-run", "-f", input, "--output", layout, "--license", "mit OR apache-2.0")
+
+	ann := readOCIManifestAnnotations(t, layout)
+	require.Equal(t, "MIT OR Apache-2.0", ann["org.opencontainers.image.licenses"])
+}
+
+// TestPublish_License_Invalid_RejectedBeforePush covers ADR-0036 decision 4's
+// strict gate: a malformed/unknown --license aborts the publish and writes NO
+// OCI output, even under --dry-run (the strict check runs before pack).
+func TestPublish_License_Invalid_RejectedBeforePush(t *testing.T) {
+	cases := []struct {
+		name    string
+		license string
+		wantSub string
+	}{
+		{
+			name:    "unknown-id",
+			license: "Apache-9.9", // well-formed grammar, not a real SPDX id
+			wantSub: "unknown SPDX id",
+		},
+		{
+			name:    "malformed-grammar",
+			license: "MIT OR OR Apache-2.0", // dangling operator
+			wantSub: "malformed SPDX expression",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			workdir := isolatedWorkdir(t)
+			input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
+			layout := filepath.Join(workdir, "layout")
+
+			_, err := runRootExpectErr(t, "publish", "--dry-run", "-f", input, "--output", layout, "--license", tc.license)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tc.wantSub)
+			require.Contains(t, err.Error(), "invalid --license")
+
+			// No OCI bytes may have been written: the layout dir must not exist.
+			_, statErr := os.Stat(layout)
+			require.True(t, os.IsNotExist(statErr),
+				"an invalid --license must abort before any OCI output is written")
+		})
+	}
+}
+
+// TestPublish_License_Omitted_NoAnnotation covers ADR-0036 decision 1's
+// "omitting it stamps no annotation": with no --license the manifest carries
+// no org.opencontainers.image.licenses annotation (existing behavior).
+func TestPublish_License_Omitted_NoAnnotation(t *testing.T) {
+	workdir := isolatedWorkdir(t)
+	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
+	layout := filepath.Join(workdir, "layout")
+
+	runRoot(t, "publish", "--dry-run", "-f", input, "--output", layout)
+
+	ann := readOCIManifestAnnotations(t, layout)
+	_, present := ann["org.opencontainers.image.licenses"]
+	require.False(t, present,
+		"omitting --license must leave the manifest with no license annotation")
 }
 
 func TestPublishUnpackRoundtrip_MergedControlCatalog(t *testing.T) {
@@ -285,4 +376,30 @@ func readManifest(t *testing.T, path string) map[string]any {
 	var manifest map[string]any
 	require.NoError(t, json.Unmarshal(raw, &manifest))
 	return manifest
+}
+
+// readOCIManifestAnnotations reads the single manifest from an OCI image
+// layout directory and returns its manifest-level annotations map. It walks
+// index.json -> the manifest blob (addressed by digest), which is where
+// go-gemara's bundle.WithAnnotations lands the publication license (ADR-0036),
+// as opposed to bundle.json (the config blob) which readManifest covers.
+func readOCIManifestAnnotations(t *testing.T, layoutDir string) map[string]any {
+	t.Helper()
+	index := readManifest(t, filepath.Join(layoutDir, "index.json"))
+	manifests, ok := index["manifests"].([]any)
+	require.True(t, ok, "index.json has no manifests array")
+	require.Len(t, manifests, 1, "expected exactly one manifest in the layout")
+	entry, _ := manifests[0].(map[string]any)
+	digest, _ := entry["digest"].(string)
+	require.NotEmpty(t, digest, "manifest entry has no digest")
+
+	// "sha256:<hex>" -> blobs/sha256/<hex>
+	algo, hex, ok := strings.Cut(digest, ":")
+	require.True(t, ok, "manifest digest %q is not algo:hex", digest)
+	manifest := readManifest(t, filepath.Join(layoutDir, "blobs", algo, hex))
+
+	if ann, ok := manifest["annotations"].(map[string]any); ok {
+		return ann
+	}
+	return map[string]any{}
 }
