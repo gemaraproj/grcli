@@ -16,7 +16,7 @@ import (
 	"github.com/revanite-io/grc-store-protocol/discovery"
 )
 
-// Discovery is the GET /.well-known/ext.grc-store document. It is aliased to the
+// Discovery is the GET /.well-known/grc-store-configuration document. It is aliased to the
 // shared wire-contract type (ADR-0035) — the same definition the hub serves and
 // pvtr consumes — so the three can't drift. The CI-audience field is named
 // CIAudience on the shared type (was CIOIDCAudience here).
@@ -24,7 +24,7 @@ type Discovery = discovery.Document
 
 // wellKnownPath is appended to the user-supplied hub base URL. RFC
 // 8615 §3 'ext.' prefix avoids needing IANA registration.
-const wellKnownPath = "/.well-known/ext.grc-store"
+const wellKnownPath = "/.well-known/grc-store-configuration"
 
 // discoveryCache holds one Discovery per normalized base URL for the
 // process lifetime. No on-disk cache — discovery is cheap and we want

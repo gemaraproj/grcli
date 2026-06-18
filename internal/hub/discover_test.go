@@ -15,8 +15,8 @@ func TestDiscover(t *testing.T) {
 	t.Run("happy path returns parsed discovery doc", func(t *testing.T) {
 		resetDiscoveryCacheForTest()
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/.well-known/ext.grc-store" {
-				t.Errorf("requested path = %q, want /.well-known/ext.grc-store", r.URL.Path)
+			if r.URL.Path != "/.well-known/grc-store-configuration" {
+				t.Errorf("requested path = %q, want /.well-known/grc-store-configuration", r.URL.Path)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"registry_url":"https://registry.example","hub_url":"https://hub.example","api_version":"v1"}`))

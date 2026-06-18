@@ -35,7 +35,7 @@ const httpTimeout = 10 * time.Second
 // OIDCMetadata is the subset of the OpenID Connect Discovery 1.0
 // document grcli's device-grant flow consumes. Fetched from
 // `<issuer>/.well-known/openid-configuration` — the OIDC standard
-// discovery path, not the hub's separate ext.grc-store doc.
+// discovery path, not the hub's separate grc-store-configuration doc.
 type OIDCMetadata struct {
 	Issuer                      string `json:"issuer"`
 	DeviceAuthorizationEndpoint string `json:"device_authorization_endpoint"`
@@ -45,7 +45,7 @@ type OIDCMetadata struct {
 // FetchOIDCMetadata loads the discovery doc for issuerURL and returns
 // the endpoints we need. issuerURL is the canonical issuer (e.g.
 // https://auth.grc.store/realms/gemara), not a hub URL — the value
-// grcli got from the hub's /.well-known/ext.grc-store doc's oidc_issuer
+// grcli got from the hub's /.well-known/grc-store-configuration doc's oidc_issuer
 // field. Errors name the URL grcli used so the user can tell whether
 // to blame the hub's discovery doc or the Keycloak itself.
 func FetchOIDCMetadata(ctx context.Context, issuerURL string) (*OIDCMetadata, error) {
