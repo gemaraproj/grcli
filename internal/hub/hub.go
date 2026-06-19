@@ -121,6 +121,22 @@ type Release struct {
 	Version        string `json:"version"`
 	ManifestDigest string `json:"manifest_digest"`
 	PushedAt       string `json:"pushed_at"`
+	// License is this version's publication license (canonical SPDX
+	// expression), exposed per-release by the hub. Absent when none was
+	// declared. Used by reference resolution to compare a dependency's
+	// license against the primary's (ADR-0039).
+	License string `json:"license,omitempty"`
+}
+
+// ReleaseFor returns the release matching version, or nil if the catalog has
+// no such version.
+func (c *Catalog) ReleaseFor(version string) *Release {
+	for i := range c.Releases {
+		if c.Releases[i].Version == version {
+			return &c.Releases[i]
+		}
+	}
+	return nil
 }
 
 // Catalog mirrors the JSON returned by GET /v1/catalogs/{ns}/{id}.
@@ -188,6 +204,58 @@ func (c *Client) GetCatalog(ctx context.Context, namespace, catalogID string) (*
 	default:
 		return nil, fmt.Errorf("hub catalog lookup %s returned %d: %s",
 			url, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+}
+
+// GetVersionBody fetches a single version's artifact body via
+// GET /v1/catalogs/{ns}/{id}/versions/{version}. Reads are public, so no token
+// is required. Returns the body bytes and the artifact's OCI manifest digest
+// (from the X-Gemara-Manifest-Digest response header). Wraps ErrCatalogNotFound
+// on 404 and ErrCatalogTombstoned on 410 (a yanked version) so callers can
+// distinguish those from a transport failure.
+func (c *Client) GetVersionBody(ctx context.Context, namespace, catalogID, version string) (body []byte, manifestDigest string, err error) {
+	if c.BaseURL == "" {
+		return nil, "", errors.New("hub base URL is required")
+	}
+	if namespace == "" || catalogID == "" || version == "" {
+		return nil, "", errors.New("namespace, catalog id, and version are required")
+	}
+	url := fmt.Sprintf("%s/v1/catalogs/%s/%s/versions/%s",
+		c.BaseURL,
+		neturl.PathEscape(namespace),
+		neturl.PathEscape(catalogID),
+		neturl.PathEscape(version))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	// Bodies are small Gemara artifacts; 16 MiB is a generous ceiling that
+	// still guards against a runaway response.
+	rb, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return nil, "", fmt.Errorf("reading version body from %s: %w", url, err)
+	}
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		if len(rb) == 0 {
+			return nil, "", fmt.Errorf("hub version fetch %s returned 200 with empty body", url)
+		}
+		return rb, resp.Header.Get("X-Gemara-Manifest-Digest"), nil
+	case http.StatusNotFound:
+		return nil, "", fmt.Errorf("%w: %s/%s@%s", ErrCatalogNotFound, namespace, catalogID, version)
+	case http.StatusGone:
+		return nil, "", fmt.Errorf("%w: %s/%s@%s", ErrCatalogTombstoned, namespace, catalogID, version)
+	default:
+		return nil, "", fmt.Errorf("hub version fetch %s returned %d: %s",
+			url, resp.StatusCode, strings.TrimSpace(string(rb)))
 	}
 }
 
