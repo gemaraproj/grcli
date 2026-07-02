@@ -406,6 +406,21 @@ func executeRoot(args []string) (string, error) {
 	return buf.String(), err
 }
 
+// executeRootSplit runs the root command with independent stdout and stderr
+// buffers, so a test can assert that content and diagnostics land on the right
+// stream (e.g. `cat` must keep stdout pipe-clean). executeRoot merges the two,
+// which cannot detect a stream-separation regression.
+func executeRootSplit(args ...string) (stdout, stderr string, err error) {
+	var out, errBuf bytes.Buffer
+	root := newRootCmd()
+	root.SetOut(&out)
+	root.SetErr(&errBuf)
+	root.SetArgs(args)
+	root.SetContext(context.Background())
+	err = root.Execute()
+	return out.String(), errBuf.String(), err
+}
+
 func readManifest(t *testing.T, path string) map[string]any {
 	t.Helper()
 	raw, err := os.ReadFile(path)
