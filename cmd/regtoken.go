@@ -27,8 +27,11 @@ import (
 // for an anonymous pull token. The returned token is also handed back so
 // callers that must pass it as an explicit flag (cosign verify) can.
 //
-// Note: the exported token is scoped to this one repository, matching
-// grcli's one-artifact-per-invocation model.
+// Note: the exported token is scoped to one repository. `unpack --with-*`
+// resolves references from other repositories in the same invocation and mints
+// a fresh per-repo token for each via mintRefPullToken (which deliberately does
+// NOT reuse the already-exported token, since it is scoped to a different repo);
+// this function still governs the primary artifact and the user-override rules.
 func ensureRegistryToken(ctx context.Context, hubBaseURL, bearer, repository string, actions []string) (string, error) {
 	if tok := os.Getenv("GRCLI_REGISTRY_TOKEN"); tok != "" {
 		return tok, nil

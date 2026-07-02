@@ -20,6 +20,7 @@ import (
 	"github.com/revanite-io/grcli/internal/cache"
 	"github.com/revanite-io/grcli/internal/hub"
 	"github.com/revanite-io/grcli/internal/refs"
+	"github.com/revanite-io/grcli/internal/registry"
 )
 
 const (
@@ -115,6 +116,13 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 	output := v.GetString(flagOutput)
 	out := cmd.OutOrStdout()
 
+	// Capture whether the user supplied an explicit registry credential BEFORE
+	// any pull mints and exports one. Reference resolution mints a fresh token
+	// per referenced repository (ADR-0031 tokens are per-namespace), and must
+	// only do so when the user hasn't provided their own credential — which is
+	// no longer detectable once resolveBundle has exported a primary token.
+	userCreds := userSuppliedRegistryCredential()
+
 	// Shared fetch stage (cache-checking pull), identical to `cat`; unpack's
 	// last mile is writing the directory.
 	unpacked, refLabel, err := resolveBundle(ctx, v, out)
@@ -133,7 +141,7 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 	}
 
 	if mode, want := referenceMode(v); want {
-		return resolveReferences(ctx, v, mode, unpacked, output, out)
+		return resolveReferences(ctx, v, mode, unpacked, output, userCreds, out)
 	}
 	return nil
 }
@@ -230,7 +238,7 @@ type refIndexEntry struct {
 // the ones that point at the targeted hub into references/<category>/ alongside
 // the primary (ADR-0039). It is best-effort: an unrecognized host, a not-found,
 // or a fetch error is reported and skipped, never fatal.
-func resolveReferences(ctx context.Context, v *viper.Viper, mode refs.Mode, b *bundle.Bundle, output string, out io.Writer) error {
+func resolveReferences(ctx context.Context, v *viper.Viper, mode refs.Mode, b *bundle.Bundle, output string, userCreds bool, out io.Writer) error {
 	url := v.GetString(flagURL)
 	repository := v.GetString(flagRepository)
 	version := v.GetString(flagVersion)
@@ -263,6 +271,28 @@ func resolveReferences(ctx context.Context, v *viper.Viper, mode refs.Mode, b *b
 		return fmt.Errorf("could not determine host from --url %q", url)
 	}
 	client := hub.New(url, "")
+
+	// References pulled from the registry (ADR-0042 decision 5) need the registry
+	// host, discovered lazily on the FIRST cache miss so a fully-cached run stays
+	// offline. Memoized: at most one discovery per unpack, and a failure only
+	// skips the references that actually need a pull, not the cached ones.
+	var (
+		regHost string
+		regErr  error
+		regDone bool
+	)
+	resolveRegistryHost := func() (string, error) {
+		if !regDone {
+			regDone = true
+			d, derr := hub.Discover(ctx, url)
+			if derr != nil {
+				regErr = fmt.Errorf("registry discovery: %w", derr)
+			} else {
+				regHost = d.RegistryURL
+			}
+		}
+		return regHost, regErr
+	}
 
 	// The primary's own coordinate (for the self-reference guard and the
 	// license-mismatch baseline). Best-effort: a non-<ns>/<id> --repository
@@ -300,7 +330,11 @@ func resolveReferences(ctx context.Context, v *viper.Viper, mode refs.Mode, b *b
 			continue // the artifact references itself; already unpacked
 		}
 
-		entry, err := fetchReference(ctx, client, c, targetHost, ns, id, s.Version, s.URL, out)
+		entry, err := fetchReference(ctx, fetchRefArgs{
+			client: client, cache: c, registryHost: resolveRegistryHost, hubURL: url,
+			host: targetHost, ns: ns, id: id, version: s.Version, sourceURL: s.URL,
+			userCreds: userCreds,
+		}, out)
 		if err != nil {
 			fmt.Fprintf(out, "  - skip [%s] %s: %v\n", s.Category, coord, err)
 			skipped++
@@ -310,23 +344,20 @@ func resolveReferences(ctx context.Context, v *viper.Viper, mode refs.Mode, b *b
 			fmt.Fprintf(out, "  ! license: %s is %s but the primary is %s — review before reuse\n",
 				coord, entry.License, primaryLicense)
 		}
-
-		// The hub serves a reference as a single JSON body, cached as a
-		// one-file bundle (Phase 4 will pull full multi-file bundles).
 		if len(entry.Files) == 0 {
-			fmt.Fprintf(out, "  - skip [%s] %s: empty reference body\n", s.Category, coord)
+			fmt.Fprintf(out, "  - skip [%s] %s: reference bundle has no files\n", s.Category, coord)
 			skipped++
 			continue
 		}
-		body := entry.Files[0].Data
-		rel := filepath.Join("references", s.Category, ns, fmt.Sprintf("%s@%s.json", id, s.Version))
-		written, err := safeWriteFile(output, rel, body)
-		if err != nil {
+
+		// A reference is a full bundle, written to its own directory (like the
+		// primary unpack): the artifact file(s) plus bundle.json (ADR-0042).
+		refDir := filepath.Join("references", s.Category, ns, fmt.Sprintf("%s@%s", id, s.Version))
+		if err := writeReference(output, refDir, entry, out); err != nil {
 			fmt.Fprintf(out, "  - skip [%s] %s: %v\n", s.Category, coord, err)
 			skipped++
 			continue
 		}
-		fmt.Fprintf(out, "  - %s\n", written)
 		index = append(index, refIndexEntry{
 			Category:       s.Category,
 			Namespace:      ns,
@@ -334,10 +365,10 @@ func resolveReferences(ctx context.Context, v *viper.Viper, mode refs.Mode, b *b
 			Version:        s.Version,
 			SourceURL:      s.URL,
 			ManifestDigest: entry.ManifestDigest,
-			ContentDigest:  cache.Digest(body),
+			ContentDigest:  referenceContentDigest(entry),
 			License:        entry.License,
 			Verified:       entry.Verified,
-			Path:           written,
+			Path:           refDir,
 		})
 		pulled++
 	}
@@ -356,13 +387,31 @@ func resolveReferences(ctx context.Context, v *viper.Viper, mode refs.Mode, b *b
 	return nil
 }
 
-// fetchReference returns a reference's bytes, from the cache when present and
-// uncorrupted, otherwise by fetching from the hub and (unless --no-cache)
-// caching the result. Verification is deferred (ADR-0039 amendment), so the
+// fetchRefArgs bundles the inputs to fetchReference (a positional list would be
+// error-prone at this width).
+type fetchRefArgs struct {
+	client *hub.Client
+	cache  *cache.Cache
+	// registryHost lazily resolves the OCI registry host, so a cache hit never
+	// triggers discovery (offline-capable). Called only on a cache miss.
+	registryHost func() (string, error)
+	hubURL       string
+	host         string // cache host key (the hub host)
+	ns, id       string
+	version      string
+	sourceURL    string
+	userCreds    bool
+}
+
+// fetchReference returns a reference as a full bundle, from the cache when
+// present and uncorrupted, otherwise by pulling the whole bundle from the
+// registry (ADR-0042 decision 5) and, unless --no-cache, caching it. The
+// per-version license is read from the hub for the license-mismatch warning and
+// recorded on the entry. Verification is deferred (ADR-0039 amendment), so the
 // entry is recorded as unverified.
-func fetchReference(ctx context.Context, client *hub.Client, c *cache.Cache, host, ns, id, version, sourceURL string, out io.Writer) (*cache.Entry, error) {
-	if c != nil {
-		e, found, err := c.Get(host, ns, id, version)
+func fetchReference(ctx context.Context, a fetchRefArgs, out io.Writer) (*cache.Entry, error) {
+	if a.cache != nil {
+		e, found, err := a.cache.Get(a.host, a.ns, a.id, a.version)
 		if err != nil {
 			fmt.Fprintf(out, "  ! cache: %v (re-fetching)\n", err)
 		} else if found {
@@ -370,33 +419,117 @@ func fetchReference(ctx context.Context, client *hub.Client, c *cache.Cache, hos
 		}
 	}
 
-	cat, err := client.GetCatalog(ctx, ns, id)
-	if err != nil {
-		return nil, fmt.Errorf("hub lookup: %w", err)
-	}
+	// License is best-effort hub metadata for the mismatch warning; a lookup
+	// failure doesn't block the pull (the bundle stands on its own).
 	license := ""
-	if rel := cat.ReleaseFor(version); rel != nil {
-		license = rel.License
+	if cat, err := a.client.GetCatalog(ctx, a.ns, a.id); err == nil {
+		if rel := cat.ReleaseFor(a.version); rel != nil {
+			license = rel.License
+		}
 	}
-	body, manifestDigest, err := client.GetVersionBody(ctx, ns, id, version)
+
+	registryHost, err := a.registryHost()
 	if err != nil {
 		return nil, err
 	}
-	// The hub serves the artifact body as a single JSON document; cache it as a
-	// one-file bundle with no manifest (Phase 4 will pull full bundles).
-	e := &cache.Entry{
-		Files:          []cache.File{{Name: id + ".json", Data: body}},
-		ManifestDigest: manifestDigest,
-		License:        license,
-		SourceURL:      sourceURL,
-		Verified:       false, // verify-on-pull is deferred
+	repo := a.ns + "/" + a.id
+	if err := mintRefPullToken(ctx, a.hubURL, repo, a.userCreds); err != nil {
+		return nil, fmt.Errorf("fetching registry pull token: %w", err)
 	}
-	if c != nil {
-		if err := c.Put(host, ns, id, version, *e); err != nil {
+	b, err := registry.UnpackRemote(ctx, registryHost, repo, a.version)
+	if err != nil {
+		return nil, err
+	}
+	// Reference resolution is direct-only (ADR-0039): if the referenced bundle
+	// carries its own transitive imports, we neither materialize nor cache them
+	// (the v2 entry stores Files + manifest only). Say so rather than dropping
+	// them silently.
+	if len(b.Imports) > 0 {
+		noteDroppedReferenceImports(out, a.ns, a.id, a.version, len(b.Imports))
+	}
+	e, err := entryFromBundle(b, license, a.sourceURL)
+	if err != nil {
+		return nil, err
+	}
+	// Persist for reuse, unless the bundle carries the dormant Imports slot the
+	// v2 entry format can't represent (see putBundle) — then serve, don't cache.
+	if a.cache != nil && len(b.Imports) == 0 {
+		if err := a.cache.Put(a.host, a.ns, a.id, a.version, e); err != nil {
 			fmt.Fprintf(out, "  ! cache write failed (continuing): %v\n", err)
 		}
 	}
-	return e, nil
+	return &e, nil
+}
+
+// noteDroppedReferenceImports warns that a referenced bundle carries its own
+// transitive imports, which grcli does not materialize: reference resolution is
+// direct-only (ADR-0039), and the v2 cache stores Files + manifest only.
+func noteDroppedReferenceImports(out io.Writer, ns, id, version string, n int) {
+	fmt.Fprintf(out, "  ! %s/%s@%s carries %d transitive import(s) — not materialized (direct-only resolution)\n",
+		ns, id, version, n)
+}
+
+// writeReference writes a reference bundle's files (and bundle.json, when
+// present) into refDir under output.
+func writeReference(output, refDir string, e *cache.Entry, out io.Writer) error {
+	for _, f := range e.Files {
+		written, err := safeWriteFile(output, filepath.Join(refDir, f.Name), f.Data)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "  - %s\n", written)
+	}
+	if len(e.Manifest) > 0 {
+		written, err := safeWriteFile(output, filepath.Join(refDir, "bundle.json"), e.Manifest)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "  - %s\n", written)
+	}
+	return nil
+}
+
+// referenceContentDigest is the index's stable content identifier for a
+// reference: the digest of its bundle.json manifest when present (the single
+// document that captures the whole bundle), else the sole file's digest. The
+// OCI identity is recorded separately as ManifestDigest.
+func referenceContentDigest(e *cache.Entry) string {
+	switch {
+	case len(e.Manifest) > 0:
+		return cache.Digest(e.Manifest)
+	case len(e.Files) == 1:
+		return cache.Digest(e.Files[0].Data)
+	default:
+		return ""
+	}
+}
+
+// mintRefPullToken exports a pull token scoped to repo for the next registry
+// pull. It bypasses ensureRegistryToken's "already set" short-circuit because
+// GRCLI_REGISTRY_TOKEN may hold a token scoped to a DIFFERENT repo (the
+// primary's, or a prior reference's) pulled earlier in this run. When the user
+// supplied their own credential, that wins and we touch nothing.
+func mintRefPullToken(ctx context.Context, hubURL, repo string, userCreds bool) error {
+	if userCreds || hubURL == "" {
+		return nil
+	}
+	tok, err := hub.FetchRegistryToken(ctx, hubURL, "", repo, []string{"pull"})
+	if err != nil {
+		return err
+	}
+	if tok != "" {
+		_ = os.Setenv("GRCLI_REGISTRY_TOKEN", tok)
+	}
+	return nil
+}
+
+// userSuppliedRegistryCredential reports whether the user set an explicit
+// registry credential via env, captured before any pull mints its own token.
+func userSuppliedRegistryCredential() bool {
+	if os.Getenv("GRCLI_REGISTRY_TOKEN") != "" {
+		return true
+	}
+	return os.Getenv("GRCLI_REGISTRY_USERNAME") != "" && os.Getenv("GRCLI_REGISTRY_PASSWORD") != ""
 }
 
 // primaryLicenseBestEffort returns the primary artifact's publication license

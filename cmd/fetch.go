@@ -139,27 +139,39 @@ func bundleFromEntry(e *cache.Entry) (*bundle.Bundle, error) {
 	return b, nil
 }
 
-// putBundle writes a freshly-pulled bundle to the cache. A cache write failure
-// is non-fatal (the pull already succeeded). A bundle carrying the dormant
-// Imports slot is not cached: the v2 entry format stores Files + manifest only
-// (ADR-0042), so caching such a bundle would silently drop the imports on the
-// next hit — better to leave it uncached and re-pull.
-func putBundle(c *cache.Cache, host, ns, id, version string, b *bundle.Bundle, diag io.Writer) {
-	if len(b.Imports) > 0 {
-		fmt.Fprintf(diag, "  ! not caching %s/%s@%s: bundle carries imports (not stored in cache)\n", ns, id, version)
-		return
-	}
-	e := cache.Entry{ManifestDigest: b.Etag}
+// entryFromBundle builds a cache entry from a pulled bundle plus optional hub
+// metadata (license, and the reference source URL). The manifest is stored as
+// the exact bytes writeBundle emits as bundle.json, so a round trip reproduces
+// byte-identical output. It does not persist anything.
+func entryFromBundle(b *bundle.Bundle, license, sourceURL string) (cache.Entry, error) {
+	e := cache.Entry{ManifestDigest: b.Etag, License: license, SourceURL: sourceURL}
 	for _, f := range b.Files {
 		e.Files = append(e.Files, cache.File{Name: f.Name, Data: f.Data})
 	}
 	if !b.Manifest.Empty() {
 		mb, err := json.MarshalIndent(b.Manifest, "", "  ")
 		if err != nil {
-			fmt.Fprintf(diag, "  ! cache write skipped (encoding manifest): %v\n", err)
-			return
+			return cache.Entry{}, fmt.Errorf("encoding manifest: %w", err)
 		}
 		e.Manifest = mb
+	}
+	return e, nil
+}
+
+// putBundle writes a freshly-pulled primary bundle to the cache. A cache write
+// failure is non-fatal (the pull already succeeded). A bundle carrying the
+// dormant Imports slot is not cached: the v2 entry format stores Files +
+// manifest only (ADR-0042), so caching such a bundle would silently drop the
+// imports on the next hit — better to leave it uncached and re-pull.
+func putBundle(c *cache.Cache, host, ns, id, version string, b *bundle.Bundle, diag io.Writer) {
+	if len(b.Imports) > 0 {
+		fmt.Fprintf(diag, "  ! not caching %s/%s@%s: bundle carries imports (not stored in cache)\n", ns, id, version)
+		return
+	}
+	e, err := entryFromBundle(b, "", "")
+	if err != nil {
+		fmt.Fprintf(diag, "  ! cache write skipped (%v)\n", err)
+		return
 	}
 	if err := c.Put(host, ns, id, version, e); err != nil {
 		fmt.Fprintf(diag, "  ! cache write failed (continuing): %v\n", err)
