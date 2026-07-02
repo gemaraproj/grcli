@@ -20,7 +20,6 @@ import (
 	"github.com/revanite-io/grcli/internal/cache"
 	"github.com/revanite-io/grcli/internal/hub"
 	"github.com/revanite-io/grcli/internal/refs"
-	"github.com/revanite-io/grcli/internal/registry"
 )
 
 const (
@@ -47,6 +46,13 @@ written alongside as bundle.json.
 The source can be a local OCI image layout (--source, the shape produced
 by 'grcli publish --dry-run') or a remote registry discovered from the
 hub (--url plus --repository). Exactly one of --source / --url must be set.
+
+Caching (ADR-0042): a remote (--url) fetch is served from a global on-disk
+cache when the same namespace/id/version has been fetched before — a cache
+hit needs no network at all. grc.store tags are immutable, so a hit can
+never be stale. Set $GRCLI_CACHE to relocate the cache; pass --no-cache to
+force a fresh pull of the primary artifact (and references) and persist
+nothing. --source reads are local and never cached.
 
 Registry auth flows through the same Docker credential chain and
 GRCLI_REGISTRY_USERNAME / GRCLI_REGISTRY_PASSWORD / GRCLI_REGISTRY_TOKEN
@@ -89,7 +95,7 @@ Examples:
 	flags.String(flagOutput, "grcli-unpacked", "directory to write extracted files to")
 	flags.Bool(flagWithImports, false, "also resolve and pull the artifact's `imports` references from the hub (requires --url)")
 	flags.Bool(flagWithReferences, false, "also resolve and pull ALL of the artifact's mapping references from the hub (requires --url); superset of --with-imports")
-	flags.Bool(flagNoCache, false, "bypass the local artifact cache when resolving references (fresh fetch, nothing persisted)")
+	flags.Bool(flagNoCache, false, "bypass the local artifact cache for the primary artifact and references (fresh fetch, nothing persisted)")
 
 	// Bind at RunE time, not here — see comment in newPublishCmd.
 	return cmd
@@ -105,52 +111,13 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 	suppressDefaultURLIfExplicit(cmd, v, flagSource)
 	ctx := cmd.Context()
 
-	source := v.GetString(flagSource)
-	url := v.GetString(flagURL)
-	repository := v.GetString(flagRepository)
 	version := v.GetString(flagVersion)
 	output := v.GetString(flagOutput)
+	out := cmd.OutOrStdout()
 
-	if version == "" {
-		return errors.New("--version is required")
-	}
-	switch {
-	case source == "" && url == "":
-		return errors.New("either --source or --url is required")
-	case source != "" && url != "":
-		return errors.New("--source is mutually exclusive with --url")
-	}
-
-	var (
-		unpacked *bundle.Bundle
-		refLabel string
-		err      error
-	)
-	if source != "" {
-		unpacked, err = registry.UnpackLocal(ctx, source, version)
-		refLabel = source
-	} else {
-		if repository == "" {
-			return errors.New("--repository is required when --url is set")
-		}
-		d, derr := hub.Discover(ctx, url)
-		if derr != nil {
-			return fmt.Errorf("hub discovery: %w", derr)
-		}
-		// Keep the advertised scheme: registryHost is the oras dial
-		// target and newRemoteRepo derives PlainHTTP from it, so stripping
-		// http:// here would force HTTPS against a plain-HTTP zot. The
-		// display label below normalizes to a bare host.
-		registryHost := d.RegistryURL
-		// ADR-0031: the registry requires a token even for reads. Reads
-		// are public, so mint an anonymous pull token from the hub and
-		// export it for the oras pull.
-		if _, terr := ensureRegistryToken(ctx, url, "", repository, []string{"pull"}); terr != nil {
-			return fmt.Errorf("fetching registry pull token: %w", terr)
-		}
-		unpacked, err = registry.UnpackRemote(ctx, registryHost, repository, version)
-		refLabel = registry.NormalizeRegistryHost(registryHost) + "/" + repository
-	}
+	// Shared fetch stage (cache-checking pull), identical to `cat`; unpack's
+	// last mile is writing the directory.
+	unpacked, refLabel, err := resolveBundle(ctx, v, out)
 	if err != nil {
 		return err
 	}
@@ -159,7 +126,6 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 		return fmt.Errorf("creating output dir: %w", err)
 	}
 
-	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "unpacked %s:%s → %s (%d files, %d imports)\n",
 		refLabel, version, output, len(unpacked.Files), len(unpacked.Imports))
 	if err := writeBundle(unpacked, output, out); err != nil {
