@@ -75,7 +75,27 @@ func runCat(cmd *cobra.Command, v *viper.Viper) error {
 	if err != nil {
 		return err
 	}
-	return catBundle(b, v.GetString(flagFile), cmd.OutOrStdout())
+	// Reference resolution is unpack's job (ADR-0042), and the v2 cache never
+	// stores Imports — but a --source layout can carry them. Never drop content
+	// silently: cat prints Files only, so say what was omitted (on stderr).
+	if len(b.Imports) > 0 {
+		noteCatOmittedImports(cmd.ErrOrStderr(), len(b.Imports))
+	}
+	// Read --file from the command's OWN flags, not viper: the viper key "file"
+	// is publish's input-file list (bound from config/env as GRCLI_FILE /
+	// `file:` in .grcli.yaml), and reading it here would let publish settings
+	// select a bundle member the user never asked for.
+	fileName, err := cmd.Flags().GetString(flagFile)
+	if err != nil {
+		return err
+	}
+	return catBundle(b, fileName, cmd.OutOrStdout())
+}
+
+// noteCatOmittedImports warns (on the diagnostics stream, never stdout) that a
+// bundle's imports are not part of cat's output.
+func noteCatOmittedImports(w io.Writer, n int) {
+	fmt.Fprintf(w, "! bundle carries %d import(s) not included in cat output — use 'grcli unpack' to materialize them\n", n)
 }
 
 // catBundle writes a bundle's Gemara content to out: the selected file when

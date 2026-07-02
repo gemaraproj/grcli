@@ -27,6 +27,7 @@ func TestPutGetRoundtrip(t *testing.T) {
 		},
 		Manifest:       []byte(`{"schemaVersion":2}`),
 		License:        "Apache-2.0",
+		LicenseChecked: true,
 		ManifestDigest: "sha256:abc",
 		SourceURL:      "https://grc.store/acme/x",
 	}
@@ -51,6 +52,9 @@ func TestPutGetRoundtrip(t *testing.T) {
 	}
 	if got.License != "Apache-2.0" || got.ManifestDigest != "sha256:abc" || got.SourceURL != in.SourceURL {
 		t.Errorf("metadata not round-tripped: %+v", got)
+	}
+	if !got.LicenseChecked {
+		t.Error("LicenseChecked not round-tripped")
 	}
 	if got.Verified {
 		t.Error("Verified should default to false")

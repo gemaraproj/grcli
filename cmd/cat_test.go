@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/gemaraproj/go-gemara/bundle"
 	"github.com/stretchr/testify/require"
+	"oras.land/oras-go/v2/content/oci"
 )
 
 // TestCat_Source_SingleFile is the end-to-end happy path: publish a one-file
@@ -99,6 +101,56 @@ func corruptOneCacheBlob(t *testing.T, root string) {
 	})
 	require.NoError(t, err)
 	require.True(t, found, "expected a cached file blob to corrupt")
+}
+
+// TestCat_PublishFileKeyDoesNotBleed guards the viper key collision: 'file' in
+// project config (or GRCLI_FILE) is publish's input-file list and must NOT act
+// as cat's --file member selector.
+func TestCat_PublishFileKeyDoesNotBleed(t *testing.T) {
+	c := tempCache(t)
+	isolatedWorkdir(t)
+	// A publish-oriented project config; would previously make cat fail with
+	// `no file named "policy.yaml" in bundle`.
+	require.NoError(t, os.WriteFile(projectConfigFile, []byte("file: policy.yaml\n"), 0o644))
+	const url = "https://hub.invalid.test"
+	seed := &bundle.Bundle{Files: []bundle.File{{Name: "controls.yaml", Data: []byte("id: from-cache\n")}}}
+	putBundle(c, hostOf(url), "acme", "controls", "1.0.0", seed, io.Discard)
+
+	out := runRoot(t, "cat", "--url", url, "--repository", "acme/controls", "--version", "1.0.0")
+	require.Equal(t, "id: from-cache\n", out, "publish's file key must not select a bundle member in cat")
+}
+
+func TestNoteCatOmittedImports(t *testing.T) {
+	var buf bytes.Buffer
+	noteCatOmittedImports(&buf, 2)
+	require.Contains(t, buf.String(), "2 import(s) not included")
+	require.Contains(t, buf.String(), "grcli unpack")
+}
+
+// TestCat_ImportsNoteEndToEnd drives the REAL command path for the omitted-
+// imports diagnostic: a --source layout whose bundle carries an Imports layer
+// (packed with go-gemara directly — grcli publish never produces one) must cat
+// only the artifact files on stdout and put the omission note on stderr. Guards
+// the runCat call wiring, which the unit test above cannot.
+func TestCat_ImportsNoteEndToEnd(t *testing.T) {
+	workdir := isolatedWorkdir(t)
+	layout := filepath.Join(workdir, "layout")
+	store, err := oci.New(layout)
+	require.NoError(t, err)
+	b := &bundle.Bundle{
+		Manifest: bundle.Manifest{BundleVersion: "1.0", GemaraVersion: "0.5.0"},
+		Files:    []bundle.File{{Name: "controls.yaml", Type: "ControlCatalog", Data: []byte("id: acme\n")}},
+		Imports:  []bundle.File{{Name: "dep.yaml", Type: "ControlCatalog", Data: []byte("id: dep\n")}},
+	}
+	desc, err := bundle.Pack(context.Background(), store, b)
+	require.NoError(t, err)
+	require.NoError(t, store.Tag(context.Background(), desc, "1.0.0"))
+
+	stdout, stderr, err := executeRootSplit("cat", "--source", layout, "--version", "1.0.0")
+	require.NoError(t, err)
+	require.Equal(t, "id: acme\n", stdout, "stdout must carry the artifact files only")
+	require.Contains(t, stderr, "1 import(s) not included", "the omission note must land on stderr")
+	require.NotContains(t, stdout, "id: dep", "import content must not leak onto stdout")
 }
 
 func TestCat_MissingVersion_Errors(t *testing.T) {

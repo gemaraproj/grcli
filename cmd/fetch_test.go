@@ -132,7 +132,9 @@ func TestResolveBundle_CacheHitSkipsNetwork(t *testing.T) {
 	unpacked := filepath.Join(workdir, "unpacked")
 	out := runRoot(t, "unpack", "--url", url, "--repository", "acme/controls",
 		"--version", "1.0.0", "--output", unpacked)
-	require.Contains(t, out, "unpacked")
+	// The label is the hub coordinate — the SAME label a registry miss prints —
+	// so repeated runs read identically whether served from cache or network.
+	require.Contains(t, out, "unpacked hub.invalid.test/acme/controls:1.0.0")
 
 	got, err := os.ReadFile(filepath.Join(unpacked, "controls.yaml"))
 	require.NoError(t, err)

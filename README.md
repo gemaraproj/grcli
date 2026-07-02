@@ -138,12 +138,17 @@ Keys (env form in parentheses):
 
 - `cache-enabled: true|false` (`GRCLI_CACHE_ENABLED`) — durable equivalent of
   `--no-cache` when `false`. Default `true`.
-- `url` (`GRCLI_URL`), `registry-token` (`GRCLI_REGISTRY_TOKEN`), … — see
-  `grcli <command> --help`.
+- `url` (`GRCLI_URL`) — the hub base URL. Config keys generally use the same
+  name as their flag (env form: `GRCLI_` + the name upper-snaked); see
+  `grcli <command> --help` for the flag list.
 
-> The cache *location* is set only by `$GRCLI_CACHE`, not by a config key. (The
-> toggle key is the flat `cache-enabled`, not `cache.enabled`, because
-> `$GRCLI_CACHE` would otherwise shadow a nested `cache.*` key.)
+> **Registry credentials are env-only, never config keys**: set
+> `GRCLI_REGISTRY_TOKEN` (or `GRCLI_REGISTRY_USERNAME` +
+> `GRCLI_REGISTRY_PASSWORD`) in the environment. A `registry-token:` line in a
+> config file is ignored. The cache *location* is likewise set only by
+> `$GRCLI_CACHE`. (The cache toggle key is the flat `cache-enabled`, not
+> `cache.enabled`, because `$GRCLI_CACHE` would otherwise shadow a nested
+> `cache.*` key.)
 
 Signing is required by default: if `cosign` isn't available, `publish`
 fails *before* pushing, so nothing unsigned reaches the registry. Pass

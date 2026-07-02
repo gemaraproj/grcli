@@ -96,10 +96,16 @@ func resolveBundle(ctx context.Context, v *viper.Viper, diag io.Writer) (b *bund
 	}
 	// Keep the advertised scheme: registryHost is the oras dial target and
 	// newRemoteRepo derives PlainHTTP from it, so stripping http:// here would
-	// force HTTPS against a plain-HTTP zot. The display label normalizes to a
-	// bare host.
+	// force HTTPS against a plain-HTTP zot.
 	registryHost := d.RegistryURL
-	label = registry.NormalizeRegistryHost(registryHost) + "/" + repository
+	// Label with the requested hub coordinate — the SAME label a cache hit
+	// prints — so repeated runs of one command read identically whether served
+	// from cache or the registry. Fall back to the registry host only when the
+	// hub host can't be parsed.
+	label = host + "/" + repository
+	if host == "" {
+		label = registry.NormalizeRegistryHost(registryHost) + "/" + repository
+	}
 
 	if _, terr := ensureRegistryToken(ctx, url, "", repository, []string{"pull"}); terr != nil {
 		return nil, "", fmt.Errorf("fetching registry pull token: %w", terr)

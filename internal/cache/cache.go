@@ -55,6 +55,12 @@ type Entry struct {
 	ManifestDigest string
 	// License is the artifact's own publication license (canonical SPDX).
 	License string
+	// LicenseChecked records that a hub license lookup SUCCEEDED for this
+	// entry (even if the catalog records no license). It distinguishes
+	// "hub confirmed no license — stop asking" from "lookup failed or never
+	// attempted — retry on a later hit", so a license-less coordinate is
+	// healed at most once instead of paying a live hub call on every hit.
+	LicenseChecked bool
 	// SourceURL is the reference URL this entry was resolved from, if any.
 	SourceURL string
 	// Verified records whether the bytes were signature-verified. Always false
@@ -70,6 +76,7 @@ type entryMeta struct {
 	Manifest       *fileMeta  `json:"manifest,omitempty"`
 	ManifestDigest string     `json:"manifest_digest,omitempty"`
 	License        string     `json:"license,omitempty"`
+	LicenseChecked bool       `json:"license_checked,omitempty"`
 	SourceURL      string     `json:"source_url,omitempty"`
 	Verified       bool       `json:"verified"`
 }
@@ -133,6 +140,7 @@ func (c *Cache) Get(host, namespace, id, version string) (entry *Entry, found bo
 	e := &Entry{
 		ManifestDigest: m.ManifestDigest,
 		License:        m.License,
+		LicenseChecked: m.LicenseChecked,
 		SourceURL:      m.SourceURL,
 		Verified:       m.Verified,
 	}
@@ -183,6 +191,7 @@ func (c *Cache) Put(host, namespace, id, version string, e Entry) error {
 	m := entryMeta{
 		ManifestDigest: e.ManifestDigest,
 		License:        e.License,
+		LicenseChecked: e.LicenseChecked,
 		SourceURL:      e.SourceURL,
 		Verified:       e.Verified,
 	}

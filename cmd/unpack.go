@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gemaraproj/go-gemara/bundle"
 	"github.com/spf13/cobra"
@@ -50,10 +51,14 @@ hub (--url plus --repository). Exactly one of --source / --url must be set.
 
 Caching (ADR-0042): a remote (--url) fetch is served from a global on-disk
 cache when the same namespace/id/version has been fetched before — a cache
-hit needs no network at all. grc.store tags are immutable, so a hit can
-never be stale. Set $GRCLI_CACHE to relocate the cache; pass --no-cache to
-force a fresh pull of the primary artifact (and references) and persist
-nothing. --source reads are local and never cached.
+hit for the artifact bytes needs no network. grc.store tags are immutable,
+so a hit can never be stale. (Best-effort exception: resolving references
+makes short-deadline hub lookups for LICENSE METADATA only — the primary's
+license baseline, and a one-time lookup for any cached reference whose
+license was never confirmed; failures are reported and never block.) Set
+$GRCLI_CACHE to relocate the cache; pass --no-cache to force a fresh pull of
+the primary artifact (and references) and persist nothing. --source reads
+are local and never cached.
 
 Registry auth flows through the same Docker credential chain and
 GRCLI_REGISTRY_USERNAME / GRCLI_REGISTRY_PASSWORD / GRCLI_REGISTRY_TOKEN
@@ -415,18 +420,32 @@ func fetchReference(ctx context.Context, a fetchRefArgs, out io.Writer) (*cache.
 		if err != nil {
 			fmt.Fprintf(out, "  ! cache: %v (re-fetching)\n", err)
 		} else if found {
+			// An entry can lack a license: a primary fetch caches with license
+			// "" (it makes no catalog lookup), and a reference cached during a
+			// hub outage recorded "" too. Heal on hit — look the license up
+			// live and upgrade the entry in place — but at most once: a
+			// SUCCESSFUL lookup sets LicenseChecked even when the catalog
+			// genuinely records no license, so a license-less coordinate does
+			// not pay a hub call on every future hit. Only a FAILED lookup
+			// leaves LicenseChecked unset for a retry on the next run.
+			if e.License == "" && !e.LicenseChecked {
+				if license, ok := referenceLicense(ctx, a.client, a.ns, a.id, a.version, out); ok {
+					e.License = license
+					e.LicenseChecked = true
+					if perr := a.cache.Put(a.host, a.ns, a.id, a.version, *e); perr != nil {
+						fmt.Fprintf(out, "  ! cache write failed (continuing): %v\n", perr)
+					}
+				}
+			}
 			return e, nil
 		}
 	}
 
 	// License is best-effort hub metadata for the mismatch warning; a lookup
-	// failure doesn't block the pull (the bundle stands on its own).
-	license := ""
-	if cat, err := a.client.GetCatalog(ctx, a.ns, a.id); err == nil {
-		if rel := cat.ReleaseFor(a.version); rel != nil {
-			license = rel.License
-		}
-	}
+	// failure doesn't block the pull (the bundle stands on its own) and does
+	// not poison the cache permanently — the hit path above retries unchecked
+	// entries (once per run) until a lookup succeeds.
+	license, licenseChecked := referenceLicense(ctx, a.client, a.ns, a.id, a.version, out)
 
 	registryHost, err := a.registryHost()
 	if err != nil {
@@ -451,6 +470,7 @@ func fetchReference(ctx context.Context, a fetchRefArgs, out io.Writer) (*cache.
 	if err != nil {
 		return nil, err
 	}
+	e.LicenseChecked = licenseChecked
 	// Persist for reuse, unless the bundle carries the dormant Imports slot the
 	// v2 entry format can't represent (see putBundle) — then serve, don't cache.
 	if a.cache != nil && len(b.Imports) == 0 {
@@ -459,6 +479,28 @@ func fetchReference(ctx context.Context, a fetchRefArgs, out io.Writer) (*cache.
 		}
 	}
 	return &e, nil
+}
+
+// referenceLicense looks up a reference's per-version publication license from
+// the hub for the license-mismatch warning and references/index.json. ok=false
+// means the LOOKUP failed (license unknown — reported, since a silently-missing
+// license suppresses the mismatch warning); ok=true with license "" means the
+// catalog genuinely records none for that version. The call is best-effort
+// metadata, so it gets a short deadline: it must never stall a resolution that
+// is otherwise served from cache.
+func referenceLicense(ctx context.Context, client *hub.Client, ns, id, version string, out io.Writer) (license string, ok bool) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cat, err := client.GetCatalog(ctx, ns, id)
+	if err != nil {
+		fmt.Fprintf(out, "  ! license lookup failed for %s/%s@%s (mismatch warning unavailable): %v\n",
+			ns, id, version, err)
+		return "", false
+	}
+	if rel := cat.ReleaseFor(version); rel != nil {
+		return rel.License, true
+	}
+	return "", true
 }
 
 // noteDroppedReferenceImports warns that a referenced bundle carries its own
@@ -472,8 +514,21 @@ func noteDroppedReferenceImports(out io.Writer, ns, id, version string, n int) {
 // writeReference writes a reference bundle's files (and bundle.json, when
 // present) into refDir under output.
 func writeReference(output, refDir string, e *cache.Entry, out io.Writer) error {
-	for _, f := range e.Files {
-		written, err := safeWriteFile(output, filepath.Join(refDir, f.Name), f.Data)
+	// File names come from the REMOTE bundle. safeWriteFile only guards escape
+	// from the output root, so a name with ../ segments could climb out of
+	// refDir and overwrite the primary's files. Validate EVERY name before
+	// writing ANY, so a hostile name later in the list can't leave earlier
+	// files orphaned on disk when the reference is rejected.
+	rels := make([]string, len(e.Files))
+	for i, f := range e.Files {
+		rel, err := refRelPath(refDir, f.Name)
+		if err != nil {
+			return err
+		}
+		rels[i] = rel
+	}
+	for i, f := range e.Files {
+		written, err := safeWriteFile(output, rels[i], f.Data)
 		if err != nil {
 			return err
 		}
@@ -489,9 +544,28 @@ func writeReference(output, refDir string, e *cache.Entry, out io.Writer) error 
 	return nil
 }
 
+// refRelPath joins a reference bundle's file name onto the reference's own
+// directory, rejecting any name whose cleaned path escapes (or resolves to)
+// that directory — the name is remote-controlled, and without this check a
+// ../-laden name could overwrite the primary's unpacked files elsewhere in
+// the output tree.
+func refRelPath(refDir, name string) (string, error) {
+	if name == "" {
+		return "", errors.New("reference file has empty name")
+	}
+	joined := filepath.Clean(filepath.Join(refDir, name))
+	if joined == refDir || !strings.HasPrefix(joined, refDir+string(filepath.Separator)) {
+		return "", fmt.Errorf("unsafe reference file name %q", name)
+	}
+	return joined, nil
+}
+
 // referenceContentDigest is the index's stable content identifier for a
 // reference: the digest of its bundle.json manifest when present (the single
-// document that captures the whole bundle), else the sole file's digest. The
+// document that captures the whole bundle), else the sole file's digest, else —
+// for a multi-file bundle with no manifest — the digest of the ordered
+// (name, per-file digest) list, so the index never records an empty
+// content_digest (a later verify pass needs something to check against). The
 // OCI identity is recorded separately as ManifestDigest.
 func referenceContentDigest(e *cache.Entry) string {
 	switch {
@@ -499,6 +573,15 @@ func referenceContentDigest(e *cache.Entry) string {
 		return cache.Digest(e.Manifest)
 	case len(e.Files) == 1:
 		return cache.Digest(e.Files[0].Data)
+	case len(e.Files) > 1:
+		var b strings.Builder
+		for _, f := range e.Files {
+			b.WriteString(f.Name)
+			b.WriteByte(0)
+			b.WriteString(cache.Digest(f.Data))
+			b.WriteByte('\n')
+		}
+		return cache.Digest([]byte(b.String()))
 	default:
 		return ""
 	}
@@ -534,11 +617,15 @@ func userSuppliedRegistryCredential() bool {
 
 // primaryLicenseBestEffort returns the primary artifact's publication license
 // for the mismatch warning, or "" if it can't be determined (no hub baseline,
-// then no warnings are emitted).
+// then no warnings are emitted). Like referenceLicense, it is best-effort
+// metadata on a short deadline: it runs on every reference resolution — even a
+// fully cache-served one — and must never stall it.
 func primaryLicenseBestEffort(ctx context.Context, client *hub.Client, ns, id, version string) string {
 	if ns == "" || id == "" {
 		return ""
 	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	cat, err := client.GetCatalog(ctx, ns, id)
 	if err != nil {
 		return ""

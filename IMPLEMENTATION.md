@@ -21,7 +21,7 @@ backend, hub, or `grc-store-protocol` change. ADRs flip `Proposed → Accepted` 
   referenced repo needs its own pull token (`ensureRegistryToken`) and a repo-path derivation
   from `{ns}/{id}`. One uniform cache format; the token/plumbing cost is accepted.
 - **`--no-cache`** (hyphenated, existing flag) bypasses the cache on both commands.
-  **`cache.enabled`** (config, default true) is the durable off switch. `$GRCLI_CACHE` location
+  **`cache-enabled`** (config, default true) is the durable off switch. `$GRCLI_CACHE` location
   override is retained; there is no cache-*location* config key.
 - **Config precedence via viper merge, not first-match** — flag > `GRCLI_*` env > project
   `./.grcli.yaml` > user-global `$XDG_CONFIG_HOME/grcli/config.yaml` > default. Fixes the phantom
@@ -59,7 +59,7 @@ backend, hub, or `grc-store-protocol` change. ADRs flip `Proposed → Accepted` 
 - Add `resolveBundle(ctx, v, src, url, repo, version) (*bundle.Bundle, error)`: source
   resolution → `cache.Get` → `UnpackRemote`/`UnpackLocal` on miss → `cache.Put` (remote only) →
   return bundle. `--source` skips cache but flows through the helper. `--no-cache` +
-  `cache.enabled` gate caching inside the helper.
+  `cache-enabled` gate caching inside the helper.
 - `runUnpack` remote branch calls `resolveBundle` instead of `UnpackRemote` directly; last mile
   stays `writeBundle`. Extend `--no-cache` to cover the primary (today it only gates references).
 - Tests: cache hit avoids network, `--no-cache` bypasses, `--source` uncached, corrupt entry
@@ -91,9 +91,9 @@ new `cmd/cat.go`, register in `cmd/root.go`
   `$XDG_CONFIG_HOME/grcli/config.yaml` (fallback `$HOME/.config/grcli/config.yaml`), then
   `MergeInConfig` the project `./.grcli.yaml` on top; `--config` still selects a single file.
   Fixes the phantom `config.yaml` path.
-- Bind `cache.enabled` (default true); shared `cachingEnabled(v)` helper = `cache.enabled &&
-  !--no-cache`, consumed by `resolveBundle` and the reference path.
-- Tests: precedence (flag > env > project > global > default), `cache.enabled:false` ⇒ no cache
+- Bind `cache-enabled` (default true); shared `cachingEnabled(v)` helper =
+  `cache-enabled && !--no-cache`, consumed by `resolveBundle` and the reference path.
+- Tests: precedence (flag > env > project > global > default), `cache-enabled:false` ⇒ no cache
   I/O, merge (global honored when project file present).
 
 ### Phase 6 — Docs + ADR status

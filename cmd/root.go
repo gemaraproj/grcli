@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,8 +43,8 @@ func newRootCmd() *cobra.Command {
 		// its own, this one is silently skipped. If you add a subcommand
 		// with its own PersistentPreRunE, call loadConfig from there too
 		// (or refactor to a withConfig wrapper around RunE).
-		PersistentPreRunE: func(*cobra.Command, []string) error {
-			return loadConfig(v, cfgFile)
+		PersistentPreRunE: func(c *cobra.Command, _ []string) error {
+			return loadConfig(v, cfgFile, c.ErrOrStderr())
 		},
 	}
 	cmd.PersistentFlags().StringVar(&cfgFile, "config", "",
@@ -75,8 +76,8 @@ const flagCacheEnabled = "cache-enabled"
 // file is MERGED on top, so a personal preference holds unless a project (or
 // env/flag) overrides it. --config <file> selects a single file and bypasses
 // the search. A missing file is not an error; any other read error is a warning
-// so the command still runs on env + flags.
-func loadConfig(v *viper.Viper, cfgFile string) error {
+// (on warn, the command's stderr) so the command still runs on env + flags.
+func loadConfig(v *viper.Viper, cfgFile string, warn io.Writer) error {
 	v.SetConfigType("yaml")
 	v.SetEnvPrefix("GRCLI")
 	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
@@ -86,23 +87,26 @@ func loadConfig(v *viper.Viper, cfgFile string) error {
 	if cfgFile != "" {
 		v.SetConfigFile(cfgFile)
 		if err := v.ReadInConfig(); err != nil {
-			fmt.Fprintln(os.Stderr, "grcli: warning: reading config:", err)
+			fmt.Fprintln(warn, "grcli: warning: reading config:", err)
 		}
 		return nil
 	}
 
 	// Base layer: the user-global file.
-	if g := userGlobalConfigPath(); g != "" && fileExists(g) {
-		v.SetConfigFile(g)
-		if err := v.ReadInConfig(); err != nil {
-			fmt.Fprintln(os.Stderr, "grcli: warning: reading user config:", err)
+	if g := userGlobalConfigPath(); g != "" {
+		warnIgnoredLegacyConfig(g, warn)
+		if fileExists(g) {
+			v.SetConfigFile(g)
+			if err := v.ReadInConfig(); err != nil {
+				fmt.Fprintln(warn, "grcli: warning: reading user config:", err)
+			}
 		}
 	}
 	// Override layer: the per-project file, merged on top.
 	if fileExists(projectConfigFile) {
 		v.SetConfigFile(projectConfigFile)
 		if err := v.MergeInConfig(); err != nil {
-			fmt.Fprintln(os.Stderr, "grcli: warning: reading project config:", err)
+			fmt.Fprintln(warn, "grcli: warning: reading project config:", err)
 		}
 	}
 	return nil
@@ -111,6 +115,34 @@ func loadConfig(v *viper.Viper, cfgFile string) error {
 // projectConfigFile is the per-project (repo-local) config, read from the
 // current directory.
 const projectConfigFile = ".grcli.yaml"
+
+// warnIgnoredLegacyConfig warns when a config file from a retired pre-ADR-0043
+// search location exists and would have been the ACTIVE config under the old
+// first-match search (no project file, no new global file) — silence there
+// would mean e.g. a hub URL quietly reverting to the prod default. Retired
+// locations: `.grcli.yaml` inside the XDG grcli dir (the old search used the
+// config name ".grcli" for every path) and the home-root `~/.grcli.yaml`.
+func warnIgnoredLegacyConfig(globalPath string, w io.Writer) {
+	if fileExists(projectConfigFile) || fileExists(globalPath) {
+		return // old and new behavior read the same (or a newer) file; no surprise
+	}
+	var legacies []string
+	// The old search only looked inside $XDG_CONFIG_HOME/grcli when XDG was
+	// set; with XDG unset, ~/.config/grcli was never a search path, so a
+	// dotfile there was never functional and gets no warning.
+	if os.Getenv("XDG_CONFIG_HOME") != "" {
+		legacies = append(legacies, filepath.Join(filepath.Dir(globalPath), ".grcli.yaml"))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		legacies = append(legacies, filepath.Join(home, ".grcli.yaml"))
+	}
+	for _, legacy := range legacies {
+		if fileExists(legacy) {
+			fmt.Fprintf(w, "grcli: warning: ignoring legacy config %s — move it to %s\n", legacy, globalPath)
+			return
+		}
+	}
+}
 
 // userGlobalConfigPath is the per-user config file: $XDG_CONFIG_HOME/grcli/
 // config.yaml, falling back to ~/.config/grcli/config.yaml. Empty if the home
