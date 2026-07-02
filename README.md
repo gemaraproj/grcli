@@ -72,6 +72,7 @@ Run `grcli <command> --help` for the full flag list. The typical flow is
 | `publish` | Pack an artifact + provenance into a signed OCI bundle, push it, and notify the hub. |
 | `verify` | Verify a remote bundle's cosign signature. |
 | `unpack` | Pull a bundle and write its files + manifest to disk. |
+| `cat` | Print an artifact's Gemara content to stdout (no files written) — for piping into `yq`. |
 | `logout` | Forget locally-stored credentials. |
 
 ```sh
@@ -91,10 +92,58 @@ grcli verify --repository myorg/my-controls --version 1.0.0 \
 
 # Unpack a bundle to disk
 grcli unpack --repository myorg/my-controls --version 1.0.0 --output ./unpacked
+
+# Print an artifact's Gemara content to stdout (no files written)
+grcli cat --repository myorg/my-controls --version 1.0.0 | yq '.metadata.title'
 ```
 
 These default to the public hub at `https://hub.grc.store`; add `--url
 <hub>` for a private deployment.
+
+### Reading artifacts: `unpack` vs `cat`
+
+`unpack` writes an artifact's files **and** its `bundle.json` manifest (with
+provenance) into a directory. `cat` streams the **Gemara content only** to
+stdout — no manifest, no files on disk — so it pipes cleanly into `yq` (the
+content is YAML; for `jq`, convert first with `yq -o=json`). A
+single-file bundle prints verbatim; a multi-file bundle prints as a `---`
+separated YAML stream (use `--file <name>` to pick one). With `--with-imports` /
+`--with-references`, `unpack` also pulls the artifacts a bundle references into a
+`references/<category>/<ns>/<id>@<version>/` directory tree plus a
+`references/index.json` (`cat` is primary-only).
+
+### Caching
+
+Remote (`--url`) fetches are served from an on-disk cache: the first pull of a
+given `namespace/id/version` is stored (the whole bundle — files + manifest),
+and later `unpack`/`cat` of the same coordinate — or references to it — are
+served from the cache with **no network at all**. grc.store tags are immutable,
+so a cache hit can never be stale. The cache lives at `$GRCLI_CACHE` (default
+`os.UserCacheDir()/grcli`) and grows without bound (no GC yet).
+
+- `--no-cache` bypasses the cache for a single run (fresh pull, nothing stored).
+- Set `cache-enabled: false` in config (below) to disable it durably.
+- `--source` (local layout) reads are never cached.
+
+### Configuration
+
+`grcli` reads config from, highest precedence first: a `--flag`, a `GRCLI_*`
+env var, the per-project `./.grcli.yaml`, and the user-global
+`$XDG_CONFIG_HOME/grcli/config.yaml` (falling back to
+`~/.config/grcli/config.yaml`). The project file is **merged over** the
+user-global file, so a personal preference holds unless a project (or env/flag)
+overrides it. `--config <file>` selects a single file and bypasses the search.
+
+Keys (env form in parentheses):
+
+- `cache-enabled: true|false` (`GRCLI_CACHE_ENABLED`) — durable equivalent of
+  `--no-cache` when `false`. Default `true`.
+- `url` (`GRCLI_URL`), `registry-token` (`GRCLI_REGISTRY_TOKEN`), … — see
+  `grcli <command> --help`.
+
+> The cache *location* is set only by `$GRCLI_CACHE`, not by a config key. (The
+> toggle key is the flat `cache-enabled`, not `cache.enabled`, because
+> `$GRCLI_CACHE` would otherwise shadow a nested `cache.*` key.)
 
 Signing is required by default: if `cosign` isn't available, `publish`
 fails *before* pushing, so nothing unsigned reaches the registry. Pass
