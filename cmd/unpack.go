@@ -345,8 +345,16 @@ func resolveReferences(ctx context.Context, v *viper.Viper, mode refs.Mode, b *b
 				coord, entry.License, primaryLicense)
 		}
 
-		rel := filepath.Join("references", s.Category, ns, fmt.Sprintf("%s@%s.%s", id, s.Version, entry.Ext))
-		written, err := safeWriteFile(output, rel, entry.Body)
+		// The hub serves a reference as a single JSON body, cached as a
+		// one-file bundle (Phase 4 will pull full multi-file bundles).
+		if len(entry.Files) == 0 {
+			fmt.Fprintf(out, "  - skip [%s] %s: empty reference body\n", s.Category, coord)
+			skipped++
+			continue
+		}
+		body := entry.Files[0].Data
+		rel := filepath.Join("references", s.Category, ns, fmt.Sprintf("%s@%s.json", id, s.Version))
+		written, err := safeWriteFile(output, rel, body)
 		if err != nil {
 			fmt.Fprintf(out, "  - skip [%s] %s: %v\n", s.Category, coord, err)
 			skipped++
@@ -360,7 +368,7 @@ func resolveReferences(ctx context.Context, v *viper.Viper, mode refs.Mode, b *b
 			Version:        s.Version,
 			SourceURL:      s.URL,
 			ManifestDigest: entry.ManifestDigest,
-			ContentDigest:  cache.Digest(entry.Body),
+			ContentDigest:  cache.Digest(body),
 			License:        entry.License,
 			Verified:       entry.Verified,
 			Path:           written,
@@ -408,13 +416,14 @@ func fetchReference(ctx context.Context, client *hub.Client, c *cache.Cache, hos
 	if err != nil {
 		return nil, err
 	}
+	// The hub serves the artifact body as a single JSON document; cache it as a
+	// one-file bundle with no manifest (Phase 4 will pull full bundles).
 	e := &cache.Entry{
-		Body:           body,
+		Files:          []cache.File{{Name: id + ".json", Data: body}},
 		ManifestDigest: manifestDigest,
 		License:        license,
 		SourceURL:      sourceURL,
-		Ext:            "json", // the hub serves the artifact body as JSON
-		Verified:       false,  // verify-on-pull is deferred
+		Verified:       false, // verify-on-pull is deferred
 	}
 	if c != nil {
 		if err := c.Put(host, ns, id, version, *e); err != nil {

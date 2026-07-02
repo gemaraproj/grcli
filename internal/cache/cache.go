@@ -1,12 +1,21 @@
 // SPDX-License-Identifier: LicenseRef-Revanite-Proprietary
 
 // Package cache is a Go-module-style on-disk cache for artifacts grcli pulls
-// when resolving references (ADR-0039). grc.store tags are immutable
-// (ADR-0033), so a coordinate (host, namespace, id, version) maps to fixed
-// bytes forever — a cache hit can never be stale, which is what makes this
-// sound. Entries are host-namespaced so prod, staging, and self-hosted hubs
-// never collide. There is intentionally no eviction in this version; the cache
-// grows like Go's module cache.
+// (ADR-0039, extended by ADR-0042). grc.store tags are immutable (ADR-0033),
+// so a coordinate (host, namespace, id, version) maps to fixed bytes forever —
+// a cache hit can never be stale, which is what makes this sound. Entries are
+// host-namespaced so prod, staging, and self-hosted hubs stay separate. (Caveat:
+// coordinate components are sanitized to single path segments, so two coordinates
+// that differ only in characters sanitize() folds together — e.g. "a/b" vs "a_b"
+// — would alias the same entry. A collision-resistant encoding is a tracked
+// follow-up; today's coordinates don't hit it.)
+//
+// An entry stores the complete decoded bundle: every artifact file plus the
+// bundle.json manifest (when present), enough to serve both `unpack` (write the
+// dir) and `cat` (stream the content) offline. It does not store the raw OCI
+// layout or the cosign signature, so `verify` still fetches from the registry.
+// There is intentionally no eviction in this version; the cache grows like Go's
+// module cache.
 package cache
 
 import (
@@ -17,35 +26,62 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
-// layoutVersion namespaces the on-disk layout so a future format change can
-// coexist with old entries instead of misreading them.
-const layoutVersion = "v1"
+// layoutVersion namespaces the on-disk layout so a format change can coexist
+// with old entries instead of misreading them. v2 (ADR-0042) stores a full
+// bundle; v1 entries (single body, ADR-0039) are simply never read.
+const layoutVersion = "v2"
 
-// Entry is a cached artifact plus the metadata recorded about it. Body is held
-// separately from the persisted meta.json (it is its own file on disk).
-type Entry struct {
-	Body []byte `json:"-"`
-
-	// Digest is the sha256 of Body, recomputed and checked on every read as a
-	// corruption guard.
-	Digest string `json:"digest"`
-	// ManifestDigest is the artifact's OCI manifest digest (its identity on
-	// the hub), recorded for provenance.
-	ManifestDigest string `json:"manifest_digest,omitempty"`
-	// License is the dependency's own publication license (canonical SPDX).
-	License string `json:"license,omitempty"`
-	// SourceURL is the reference URL this entry was resolved from.
-	SourceURL string `json:"source_url,omitempty"`
-	// Ext is the body file extension (without the dot), e.g. "json".
-	Ext string `json:"ext"`
-	// Verified records whether the bytes were signature-verified. Always false
-	// in the first cut — verify-on-pull is deferred (ADR-0039 amendment) — but
-	// persisted so a later pass can upgrade entries in place.
-	Verified bool `json:"verified"`
+// File is one artifact file in a cached bundle. Data is held separately from the
+// persisted meta.json — each file is its own blob on disk.
+type File struct {
+	Name string
+	Data []byte
 }
+
+// Entry is a cached bundle plus the metadata recorded about it.
+type Entry struct {
+	// Files are the bundle's artifact files (bundle.Files), in order.
+	Files []File
+	// Manifest is the bundle.json bytes (the JSON-encoded OCI manifest, with any
+	// SLSA-shaped provenance). Nil for an entry that carries no manifest.
+	Manifest []byte
+
+	// ManifestDigest is the artifact's OCI manifest digest (its identity on the
+	// hub — bundle.Etag), recorded for provenance.
+	ManifestDigest string
+	// License is the artifact's own publication license (canonical SPDX).
+	License string
+	// SourceURL is the reference URL this entry was resolved from, if any.
+	SourceURL string
+	// Verified records whether the bytes were signature-verified. Always false
+	// for now — verify-on-pull is deferred (ADR-0039 amendment) — but persisted
+	// so a later pass can upgrade entries in place.
+	Verified bool
+}
+
+// entryMeta is the persisted meta.json. File bodies and bundle.json live in
+// their own files; meta.json records their names and digests.
+type entryMeta struct {
+	Files          []fileMeta `json:"files"`
+	Manifest       *fileMeta  `json:"manifest,omitempty"`
+	ManifestDigest string     `json:"manifest_digest,omitempty"`
+	License        string     `json:"license,omitempty"`
+	SourceURL      string     `json:"source_url,omitempty"`
+	Verified       bool       `json:"verified"`
+}
+
+// fileMeta records one stored blob's original name and content digest.
+type fileMeta struct {
+	Name   string `json:"name"`
+	Digest string `json:"digest"`
+}
+
+// manifestFile is the fixed on-disk name for the cached bundle.json.
+const manifestFile = "bundle.json"
 
 // Cache is a handle to an on-disk cache rooted at a directory.
 type Cache struct {
@@ -77,8 +113,9 @@ func (c *Cache) entryDir(host, namespace, id, version string) string {
 }
 
 // Get returns the cached entry for a coordinate. found is false when the entry
-// is absent. A present-but-corrupt entry (body digest mismatch) returns
-// found=false with a non-nil error so the caller can warn and re-fetch.
+// is absent. A present-but-corrupt entry (any blob's digest mismatches, or a
+// recorded blob is missing) returns found=false with a non-nil error so the
+// caller can warn and re-fetch.
 func (c *Cache) Get(host, namespace, id, version string) (entry *Entry, found bool, err error) {
 	dir := c.entryDir(host, namespace, id, version)
 	metaBytes, err := os.ReadFile(filepath.Join(dir, "meta.json"))
@@ -88,33 +125,81 @@ func (c *Cache) Get(host, namespace, id, version string) (entry *Entry, found bo
 	if err != nil {
 		return nil, false, fmt.Errorf("reading cache metadata: %w", err)
 	}
-	var e Entry
-	if err := json.Unmarshal(metaBytes, &e); err != nil {
+	var m entryMeta
+	if err := json.Unmarshal(metaBytes, &m); err != nil {
 		return nil, false, fmt.Errorf("decoding cache metadata for %s/%s@%s: %w", namespace, id, version, err)
 	}
-	body, err := os.ReadFile(filepath.Join(dir, "body."+bodyExt(e.Ext)))
-	if err != nil {
-		return nil, false, fmt.Errorf("reading cached body for %s/%s@%s: %w", namespace, id, version, err)
+
+	e := &Entry{
+		ManifestDigest: m.ManifestDigest,
+		License:        m.License,
+		SourceURL:      m.SourceURL,
+		Verified:       m.Verified,
 	}
-	if got := digestOf(body); got != e.Digest {
-		return nil, false, fmt.Errorf("cached body for %s/%s@%s is corrupt (digest %s != recorded %s)",
-			namespace, id, version, got, e.Digest)
+	for i, fm := range m.Files {
+		data, rerr := readBlob(dir, "files", strconv.Itoa(i), fm, namespace, id, version)
+		if rerr != nil {
+			return nil, false, rerr
+		}
+		e.Files = append(e.Files, File{Name: fm.Name, Data: data})
 	}
-	e.Body = body
-	return &e, true, nil
+	if m.Manifest != nil {
+		data, rerr := readBlob(dir, "", manifestFile, *m.Manifest, namespace, id, version)
+		if rerr != nil {
+			return nil, false, rerr
+		}
+		e.Manifest = data
+	}
+	return e, true, nil
 }
 
-// Put writes an entry to the cache, computing and recording the body digest.
+// readBlob reads dir/[sub/]name, verifying its digest against the recorded
+// fileMeta. A missing or corrupt blob is an error so the caller re-fetches.
+func readBlob(dir, sub, name string, fm fileMeta, namespace, id, version string) ([]byte, error) {
+	path := filepath.Join(dir, sub, name)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading cached %s for %s/%s@%s: %w", fm.Name, namespace, id, version, err)
+	}
+	if got := digestOf(data); got != fm.Digest {
+		return nil, fmt.Errorf("cached %s for %s/%s@%s is corrupt (digest %s != recorded %s)",
+			fm.Name, namespace, id, version, got, fm.Digest)
+	}
+	return data, nil
+}
+
+// Put writes an entry to the cache, computing and recording each blob's digest.
+// What makes a later Get safe is the per-blob digest check on read: a blob whose
+// bytes don't match the digest recorded in meta.json is rejected as corrupt.
+// meta.json is written last only so a half-written brand-new entry reads as a
+// clean miss (no meta.json ⇒ found=false) rather than a partial hit.
 func (c *Cache) Put(host, namespace, id, version string, e Entry) error {
 	dir := c.entryDir(host, namespace, id, version)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	filesDir := filepath.Join(dir, "files")
+	if err := os.MkdirAll(filesDir, 0o755); err != nil {
 		return fmt.Errorf("creating cache dir: %w", err)
 	}
-	e.Digest = digestOf(e.Body)
-	if err := os.WriteFile(filepath.Join(dir, "body."+bodyExt(e.Ext)), e.Body, 0o644); err != nil {
-		return fmt.Errorf("writing cache body: %w", err)
+
+	m := entryMeta{
+		ManifestDigest: e.ManifestDigest,
+		License:        e.License,
+		SourceURL:      e.SourceURL,
+		Verified:       e.Verified,
 	}
-	metaBytes, err := json.MarshalIndent(e, "", "  ")
+	for i, f := range e.Files {
+		if err := os.WriteFile(filepath.Join(filesDir, strconv.Itoa(i)), f.Data, 0o644); err != nil {
+			return fmt.Errorf("writing cache file %q: %w", f.Name, err)
+		}
+		m.Files = append(m.Files, fileMeta{Name: f.Name, Digest: digestOf(f.Data)})
+	}
+	if e.Manifest != nil {
+		if err := os.WriteFile(filepath.Join(dir, manifestFile), e.Manifest, 0o644); err != nil {
+			return fmt.Errorf("writing cache manifest: %w", err)
+		}
+		m.Manifest = &fileMeta{Name: manifestFile, Digest: digestOf(e.Manifest)}
+	}
+
+	metaBytes, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encoding cache metadata: %w", err)
 	}
@@ -125,20 +210,13 @@ func (c *Cache) Put(host, namespace, id, version string, e Entry) error {
 }
 
 // Digest returns the sha256 content digest of b in "sha256:<hex>" form — the
-// same value recorded on a cache Entry, exported so callers can record it for
+// same value recorded on a cache blob, exported so callers can record it for
 // content that bypasses the cache (e.g. under --no-cache).
 func Digest(b []byte) string { return digestOf(b) }
 
 func digestOf(b []byte) string {
 	sum := sha256.Sum256(b)
 	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-func bodyExt(ext string) string {
-	if ext == "" {
-		return "json"
-	}
-	return ext
 }
 
 // sanitize reduces a coordinate component to a safe single path segment:

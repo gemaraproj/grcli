@@ -81,7 +81,9 @@ new `cmd/cat.go`, register in `cmd/root.go`
   repository from `{ns}/{id}`, `ensureRegistryToken(..., []string{"pull"})` per referenced repo,
   `UnpackRemote`, store as a `v2` entry. Keep the license/manifest-digest recording and the
   license-mismatch warning. Reference *output* under `references/<category>/…` is unchanged.
-- Tests: reference cache hit/miss, per-repo token minted, license warning preserved.
+- Tests: reference cache hit/miss, per-repo token minted, license warning preserved. Also close
+  the pre-existing zero-coverage gap on `resolveReferences`/`fetchReference` surfaced in Phase 1
+  QA — this path had no tests through Phase 1 and must not land Phase 4 untested.
 
 ### Phase 5 — User-global config  *(independent; can run in parallel with P1–P4)*
 `cmd/root.go` (`loadConfig`), all command RunEs
