@@ -114,11 +114,11 @@ func resolveBundle(ctx context.Context, v *viper.Viper, diag io.Writer) (b *bund
 	return b, label, nil
 }
 
-// cachingEnabled reports whether the artifact cache should be used. Today that
-// is solely the --no-cache flag; ADR-0043 will AND in a cache.enabled config
-// key here so both share one gate.
+// cachingEnabled reports whether the artifact cache should be used: the durable
+// cache-enabled preference (ADR-0043, default true) AND the absence of the
+// per-invocation --no-cache flag. Either one off disables caching.
 func cachingEnabled(v *viper.Viper) bool {
-	return !v.GetBool(flagNoCache)
+	return v.GetBool(flagCacheEnabled) && !v.GetBool(flagNoCache)
 }
 
 // bundleFromEntry reconstructs an in-memory bundle from a cache entry. The

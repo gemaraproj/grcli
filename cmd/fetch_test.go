@@ -182,6 +182,7 @@ func TestBundleFromEntryRejectsBadManifest(t *testing.T) {
 
 func TestCachingEnabled(t *testing.T) {
 	v := viper.New()
+	v.SetDefault(flagCacheEnabled, true)
 	v.SetDefault(flagNoCache, false)
 	if !cachingEnabled(v) {
 		t.Error("caching should be enabled by default")
@@ -189,5 +190,11 @@ func TestCachingEnabled(t *testing.T) {
 	v.Set(flagNoCache, true)
 	if cachingEnabled(v) {
 		t.Error("--no-cache should disable caching")
+	}
+	// cache-enabled:false disables caching even without --no-cache.
+	v.Set(flagNoCache, false)
+	v.Set(flagCacheEnabled, false)
+	if cachingEnabled(v) {
+		t.Error("cache-enabled:false should disable caching")
 	}
 }

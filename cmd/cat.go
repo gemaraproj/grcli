@@ -57,7 +57,7 @@ Examples:
 	flags.String(flagRepository, "", "repository path within the registry (requires --url)")
 	flags.String(flagVersion, "", "artifact version to print — the metadata.version of the published bundle (required)")
 	flags.String(flagFile, "", "print only the named file (for bundles carrying more than one)")
-	flags.Bool(flagNoCache, false, "bypass the local artifact cache (fresh fetch, nothing persisted)")
+	flags.Bool(flagNoCache, false, "bypass the local artifact cache for this run; set cache-enabled: false in config to disable it durably")
 
 	// Bind at RunE time, not here — see comment in newPublishCmd.
 	return cmd

@@ -96,7 +96,7 @@ Examples:
 	flags.String(flagOutput, "grcli-unpacked", "directory to write extracted files to")
 	flags.Bool(flagWithImports, false, "also resolve and pull the artifact's `imports` references from the hub (requires --url)")
 	flags.Bool(flagWithReferences, false, "also resolve and pull ALL of the artifact's mapping references from the hub (requires --url); superset of --with-imports")
-	flags.Bool(flagNoCache, false, "bypass the local artifact cache for the primary artifact and references (fresh fetch, nothing persisted)")
+	flags.Bool(flagNoCache, false, "bypass the local artifact cache for this run (primary + references); set cache-enabled: false in config to disable it durably")
 
 	// Bind at RunE time, not here — see comment in newPublishCmd.
 	return cmd
@@ -301,7 +301,7 @@ func resolveReferences(ctx context.Context, v *viper.Viper, mode refs.Mode, b *b
 	primaryLicense := primaryLicenseBestEffort(ctx, client, primaryNS, primaryID, version)
 
 	var c *cache.Cache
-	if !v.GetBool(flagNoCache) {
+	if cachingEnabled(v) {
 		cc, err := cache.Open()
 		if err != nil {
 			fmt.Fprintf(out, "  ! cache unavailable, fetching without it: %v\n", err)
