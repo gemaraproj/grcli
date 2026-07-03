@@ -58,20 +58,16 @@ func TestVerify_FlagValidation(t *testing.T) {
 			wantSub: "mutually exclusive",
 		},
 		{
-			name: "keyless-missing-issuer",
-			args: []string{
-				"verify", "--url", "https://hub.example", "--repository", "rep", "--version", "t",
-				"--certificate-identity", "id",
-			},
-			wantSub: "requires both --certificate-identity and --certificate-oidc-issuer",
-		},
-		{
-			name: "keyless-missing-identity",
+			// issuer without identity (and no key) is an explicit error:
+			// identity is the keyless trigger; a lone issuer has nothing to
+			// bind to (ADR-0044). Identity WITHOUT issuer is NOT here — it
+			// now succeeds by defaulting the issuer (see TestResolveVerifyPolicy_URL).
+			name: "issuer-without-identity",
 			args: []string{
 				"verify", "--url", "https://hub.example", "--repository", "rep", "--version", "t",
 				"--certificate-oidc-issuer", "https://example.com",
 			},
-			wantSub: "requires both --certificate-identity and --certificate-oidc-issuer",
+			wantSub: "--certificate-oidc-issuer requires --certificate-identity",
 		},
 	}
 	for _, tc := range cases {
@@ -106,6 +102,48 @@ func TestResolveVerifyPolicy_URL(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "discovered.example/team/artifact:1.0.0", policy.reference,
 			"cosign reference must be bare-host/repo:tag; a https:// prefix would cause cosign to reject the reference")
+	})
+
+	// discovery server shared by the issuer-default cases below.
+	discovery := func(t *testing.T) *httptest.Server {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"registry_url":"https://discovered.example/","hub_url":"https://hub.example","api_version":"v1"}`))
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+
+	t.Run("keyless without issuer defaults to GitHub Actions", func(t *testing.T) {
+		srv := discovery(t)
+		v := viper.New()
+		v.Set(flagURL, srv.URL)
+		v.Set(flagRepository, "team/artifact")
+		v.Set(flagVersion, "1.0.0")
+		v.Set(flagCertIdentity, "https://github.com/team/repo/.github/workflows/publish.yml@refs/heads/main")
+		// flagCertOIDCIssuer deliberately unset
+
+		policy, err := resolveVerifyPolicy(context.Background(), v)
+		require.NoError(t, err)
+		require.Equal(t, defaultCertOIDCIssuer, policy.issuer,
+			"keyless verify with no --certificate-oidc-issuer must default to the GitHub Actions issuer")
+		require.Contains(t, policy.cosignArgs(), defaultCertOIDCIssuer,
+			"the defaulted issuer must reach cosign")
+	})
+
+	t.Run("explicit issuer overrides the default", func(t *testing.T) {
+		srv := discovery(t)
+		v := viper.New()
+		v.Set(flagURL, srv.URL)
+		v.Set(flagRepository, "team/artifact")
+		v.Set(flagVersion, "1.0.0")
+		v.Set(flagCertIdentity, "id")
+		v.Set(flagCertOIDCIssuer, "https://gitlab.example.com")
+
+		policy, err := resolveVerifyPolicy(context.Background(), v)
+		require.NoError(t, err)
+		require.Equal(t, "https://gitlab.example.com", policy.issuer,
+			"an explicit --certificate-oidc-issuer must override the GitHub Actions default")
 	})
 }
 

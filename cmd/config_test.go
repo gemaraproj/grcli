@@ -46,19 +46,22 @@ func TestConfig_GlobalDisablesCache(t *testing.T) {
 	require.False(t, cachingEnabled(loadedViper(t)), "user-global cache-enabled:false must disable caching")
 }
 
-func TestConfig_ProjectOverridesGlobal(t *testing.T) {
+// TestConfig_ProjectFileIgnored: a repo-local ./.grcli.yaml is no longer read
+// (ADR-0044), so it cannot override the user-global file — the global setting
+// stands even when a project file says otherwise.
+func TestConfig_ProjectFileIgnored(t *testing.T) {
 	isolatedWorkdir(t)
 	writeGlobalConfig(t, "cache-enabled: false\n")
 	writeProjectConfig(t, "cache-enabled: true\n")
-	require.True(t, cachingEnabled(loadedViper(t)),
-		"a project .grcli.yaml must override (merge over) the user-global file")
+	require.False(t, cachingEnabled(loadedViper(t)),
+		"a project .grcli.yaml must be ignored — user-global cache-enabled:false stands")
 }
 
-func TestConfig_EnvOverridesProject(t *testing.T) {
+func TestConfig_EnvOverridesGlobal(t *testing.T) {
 	isolatedWorkdir(t)
-	writeProjectConfig(t, "cache-enabled: false\n")
+	writeGlobalConfig(t, "cache-enabled: false\n")
 	t.Setenv("GRCLI_CACHE_ENABLED", "true")
-	require.True(t, cachingEnabled(loadedViper(t)), "GRCLI_* env must override config files")
+	require.True(t, cachingEnabled(loadedViper(t)), "GRCLI_* env must override the config file")
 }
 
 // TestConfig_GlobalFromHomeFallbackWhenXDGUnset covers the branch most users
@@ -81,9 +84,9 @@ func TestConfig_GlobalFromHomeFallbackWhenXDGUnset(t *testing.T) {
 
 func TestConfig_ExplicitFileBypassesSearch(t *testing.T) {
 	isolatedWorkdir(t)
-	// A project file says disable; an explicit --config file says enable. The
-	// explicit file must win and the project file must not be merged in.
-	writeProjectConfig(t, "cache-enabled: false\n")
+	// The user-global file says disable; an explicit --config file says enable.
+	// The explicit file must win and the global file must not be read.
+	writeGlobalConfig(t, "cache-enabled: false\n")
 	explicit := filepath.Join(t.TempDir(), "custom.yaml")
 	require.NoError(t, os.WriteFile(explicit, []byte("cache-enabled: true\n"), 0o644))
 	v := viper.New()
@@ -91,72 +94,64 @@ func TestConfig_ExplicitFileBypassesSearch(t *testing.T) {
 	require.True(t, cachingEnabled(v))
 }
 
-// TestWarnIgnoredLegacyConfig covers the retired pre-ADR-0043 locations: warn
-// exactly when a legacy file would have been the ACTIVE config (no project
-// file, no new global file), stay silent otherwise.
-func TestWarnIgnoredLegacyConfig(t *testing.T) {
+// TestWarnIgnoredConfig: warn whenever a config file sits at a location grcli
+// no longer reads — the per-project ./.grcli.yaml (ADR-0044) or the pre-0043
+// home/XDG dotfiles — and stay silent when there are none. Unlike the old
+// legacy check, a present project file warns even when a user-global file
+// exists, because the project file no longer merges over it.
+func TestWarnIgnoredConfig(t *testing.T) {
 	warned := func(t *testing.T) string {
 		t.Helper()
 		var buf bytes.Buffer
-		warnIgnoredLegacyConfig(userGlobalConfigPath(), &buf)
+		warnIgnoredConfig(userGlobalConfigPath(), &buf)
 		return buf.String()
 	}
 
-	t.Run("legacy XDG dotfile, nothing else: warns", func(t *testing.T) {
+	t.Run("project ./.grcli.yaml present: warns even with a global file", func(t *testing.T) {
+		isolatedWorkdir(t)
+		writeGlobalConfig(t, "cache-enabled: true\n")
+		writeProjectConfig(t, "url: x\n")
+		out := warned(t)
+		require.Contains(t, out, "ignoring config")
+		require.Contains(t, out, ".grcli.yaml")
+	})
+
+	t.Run("legacy XDG dotfile present: warns", func(t *testing.T) {
 		isolatedWorkdir(t)
 		dir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "grcli")
 		require.NoError(t, os.MkdirAll(dir, 0o755))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, ".grcli.yaml"), []byte("url: x\n"), 0o644))
-		out := warned(t)
-		require.Contains(t, out, "ignoring legacy config")
-		require.Contains(t, out, ".grcli.yaml")
+		require.Contains(t, warned(t), "ignoring config")
 	})
 
-	t.Run("legacy home dotfile, nothing else: warns", func(t *testing.T) {
+	t.Run("legacy home dotfile present: warns", func(t *testing.T) {
 		home := isolatedWorkdir(t)
 		t.Chdir(t.TempDir()) // cwd must differ from HOME, or ~/.grcli.yaml doubles as the project file
 		require.NoError(t, os.WriteFile(filepath.Join(home, ".grcli.yaml"), []byte("url: x\n"), 0o644))
-		require.Contains(t, warned(t), "ignoring legacy config")
+		require.Contains(t, warned(t), "ignoring config")
 	})
 
-	t.Run("migrated global file present: silent", func(t *testing.T) {
-		isolatedWorkdir(t)
-		writeGlobalConfig(t, "cache-enabled: true\n")
-		dir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "grcli")
-		require.NoError(t, os.WriteFile(filepath.Join(dir, ".grcli.yaml"), []byte("url: x\n"), 0o644))
-		require.Empty(t, warned(t))
-	})
-
-	t.Run("project file present: silent (legacy was shadowed before too)", func(t *testing.T) {
-		home := isolatedWorkdir(t)
-		writeProjectConfig(t, "cache-enabled: true\n")
-		require.NoError(t, os.WriteFile(filepath.Join(home, ".grcli.yaml"), []byte("url: x\n"), 0o644))
-		require.Empty(t, warned(t))
-	})
-
-	t.Run("no legacy files: silent", func(t *testing.T) {
+	t.Run("no ignored files: silent", func(t *testing.T) {
 		isolatedWorkdir(t)
 		require.Empty(t, warned(t))
 	})
 }
 
-// TestConfig_EndToEnd_LegacyWarningReachesStderr drives the REAL command path
-// (root PersistentPreRunE → loadConfig → warnIgnoredLegacyConfig → the
-// command's stderr): with a legacy XDG dotfile seeded and no project/global
-// file, any command run must surface the migration warning. Guards the call
-// wiring, which the direct-helper tests above cannot (deleting the loadConfig
-// call site would not fail them).
-func TestConfig_EndToEnd_LegacyWarningReachesStderr(t *testing.T) {
+// TestConfig_EndToEnd_IgnoredWarningReachesStderr drives the REAL command path
+// (root PersistentPreRunE → loadConfig → warnIgnoredConfig → the command's
+// stderr): with a per-project ./.grcli.yaml seeded, any command run must
+// surface the migration warning. Guards the call wiring, which the direct-
+// helper tests above cannot (deleting the loadConfig call site would not fail
+// them).
+func TestConfig_EndToEnd_IgnoredWarningReachesStderr(t *testing.T) {
 	isolatedWorkdir(t)
-	dir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "grcli")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, ".grcli.yaml"), []byte("url: x\n"), 0o644))
+	writeProjectConfig(t, "url: x\n")
 
 	// `cat` without --version fails in RunE — AFTER PersistentPreRunE has run
 	// loadConfig — so the warning must already be on stderr.
 	stdout, stderr, err := executeRootSplit("cat", "--source", "irrelevant")
 	require.Error(t, err)
-	require.Contains(t, stderr, "ignoring legacy config", "loadConfig must emit the warning on the command's stderr")
+	require.Contains(t, stderr, "ignoring config", "loadConfig must emit the migration warning on the command's stderr")
 	require.Empty(t, stdout)
 }
 

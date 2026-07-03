@@ -26,6 +26,15 @@ const (
 	flagCertOIDCIssuer = "certificate-oidc-issuer"
 )
 
+// defaultCertOIDCIssuer is the issuer assumed for keyless verification when
+// --certificate-oidc-issuer (or the GRCLI_CERTIFICATE_OIDC_ISSUER env /
+// user-global config key of the same name) is not set. Publishing to grc.store
+// is a GitHub-Actions OIDC flow, so this is the issuer for ~every publisher;
+// GitHub Enterprise / other CI / an OIDC proxy override it (ADR-0044). It is
+// applied contextually inside keyless mode, NOT as a viper default, so it can't
+// disturb key-vs-keyless detection.
+const defaultCertOIDCIssuer = "https://token.actions.githubusercontent.com"
+
 func newVerifyCmd(v *viper.Viper) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "verify",
@@ -43,12 +52,14 @@ will NOT verify here; re-publish them to re-sign in the bundle format.
 Requires cosign >= 3.x on PATH.
 
 You must specify either --cosign-key (key-based verification, paired
-with publish's --cosign-key) or both --certificate-identity and
---certificate-oidc-issuer (keyless verification, paired with publish's
-GitHub-Actions OIDC flow). For keyless, the identity is typically the
-publishing workflow URL, e.g.
-https://github.com/<org>/<repo>/.github/workflows/publish.yml@refs/heads/main,
-and the issuer is https://token.actions.githubusercontent.com.
+with publish's --cosign-key) or --certificate-identity (keyless
+verification, paired with publish's GitHub-Actions OIDC flow). For
+keyless, the identity is typically the publishing workflow URL, e.g.
+https://github.com/<org>/<repo>/.github/workflows/publish.yml@refs/heads/main.
+--certificate-oidc-issuer defaults to https://token.actions.githubusercontent.com
+(the GitHub Actions issuer); set it — as a flag, GRCLI_CERTIFICATE_OIDC_ISSUER,
+or a user-global config key — only for GitHub Enterprise, another CI provider,
+or an OIDC proxy.
 
 The verification policy a publisher should register with grc.store is
 exactly this pair: a public key, or an (identity, issuer) tuple. (The
@@ -63,11 +74,16 @@ Examples:
     --repository myorg/my-controls --version 1.0.0 \
     --cosign-key /keys/cosign.pub
 
-  # Keyless (GitHub Actions OIDC)
+  # Keyless (GitHub Actions OIDC — issuer defaults to GitHub Actions)
   grcli verify --url https://hub.grc.store \
     --repository myorg/my-controls --version 1.0.0 \
-    --certificate-identity   https://github.com/myorg/my-controls/.github/workflows/publish.yml@refs/heads/main \
-    --certificate-oidc-issuer https://token.actions.githubusercontent.com`,
+    --certificate-identity https://github.com/myorg/my-controls/.github/workflows/publish.yml@refs/heads/main
+
+  # Keyless with a non-GitHub-Actions issuer
+  grcli verify --url https://hub.grc.store \
+    --repository myorg/my-controls --version 1.0.0 \
+    --certificate-identity   <workflow-identity> \
+    --certificate-oidc-issuer https://gitlab.example.com`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runVerify(cmd, v)
 		},
@@ -79,7 +95,7 @@ Examples:
 	flags.String(flagVersion, "", "artifact version to verify — the metadata.version of the published bundle (required)")
 	flags.String(flagCosignKey, "", "cosign public key file (mutually exclusive with keyless flags)")
 	flags.String(flagCertIdentity, "", "expected signer identity (e.g., a GHA workflow URL)")
-	flags.String(flagCertOIDCIssuer, "", "expected OIDC issuer (e.g., https://token.actions.githubusercontent.com)")
+	flags.String(flagCertOIDCIssuer, "", "expected OIDC issuer for keyless verification (default: https://token.actions.githubusercontent.com — override for GitHub Enterprise / other CI)")
 
 	return cmd
 }
@@ -176,15 +192,27 @@ func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, err
 		return verifyPolicy{}, errors.New("--version is required")
 	}
 
+	// Keyless mode is keyed on --certificate-identity ALONE, never the issuer:
+	// the issuer carries a default (defaultCertOIDCIssuer), so letting it
+	// trigger keyless mode would make every invocation look keyless and break
+	// --cosign-key detection.
 	keyMode := keyPath != ""
-	keylessMode := identity != "" || issuer != ""
+	keylessMode := identity != ""
+	issuerSet := issuer != ""
 	switch {
-	case !keyMode && !keylessMode:
+	case !keyMode && !keylessMode && !issuerSet:
 		return verifyPolicy{}, errors.New("either --cosign-key or --certificate-identity is required")
-	case keyMode && keylessMode:
+	case keyMode && (keylessMode || issuerSet):
 		return verifyPolicy{}, errors.New("--cosign-key is mutually exclusive with --certificate-identity / --certificate-oidc-issuer")
-	case keylessMode && (identity == "" || issuer == ""):
-		return verifyPolicy{}, errors.New("keyless verification requires both --certificate-identity and --certificate-oidc-issuer")
+	case issuerSet && !keylessMode:
+		return verifyPolicy{}, errors.New("--certificate-oidc-issuer requires --certificate-identity")
+	}
+	// Keyless with no explicit issuer defaults to GitHub Actions (ADR-0044).
+	// This runs AFTER mode resolution, and cosign still checks issuer == this
+	// value, so a wrong default can only cause a false rejection, never a
+	// false acceptance.
+	if keylessMode && issuer == "" {
+		issuer = defaultCertOIDCIssuer
 	}
 
 	d, err := hub.Discover(ctx, url)

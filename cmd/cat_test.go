@@ -106,18 +106,22 @@ func corruptOneCacheBlob(t *testing.T, root string) {
 // TestCat_PublishFileKeyDoesNotBleed guards the viper key collision: 'file' in
 // project config (or GRCLI_FILE) is publish's input-file list and must NOT act
 // as cat's --file member selector.
-func TestCat_PublishFileKeyDoesNotBleed(t *testing.T) {
+// TestCat_PublishFileKeyIgnored: a project ./.grcli.yaml is no longer read at
+// all (ADR-0044), so a publish-oriented `file:` key in it cannot bleed into
+// cat's --file selection. cat streams the full bundle on stdout; the ignored
+// project file earns a migration warning on stderr (kept off the stdout pipe).
+func TestCat_PublishFileKeyIgnored(t *testing.T) {
 	c := tempCache(t)
 	isolatedWorkdir(t)
-	// A publish-oriented project config; would previously make cat fail with
-	// `no file named "policy.yaml" in bundle`.
 	require.NoError(t, os.WriteFile(projectConfigFile, []byte("file: policy.yaml\n"), 0o644))
 	const url = "https://hub.invalid.test"
 	seed := &bundle.Bundle{Files: []bundle.File{{Name: "controls.yaml", Data: []byte("id: from-cache\n")}}}
 	putBundle(c, hostOf(url), "acme", "controls", "1.0.0", seed, io.Discard)
 
-	out := runRoot(t, "cat", "--url", url, "--repository", "acme/controls", "--version", "1.0.0")
-	require.Equal(t, "id: from-cache\n", out, "publish's file key must not select a bundle member in cat")
+	stdout, stderr, err := executeRootSplit("cat", "--url", url, "--repository", "acme/controls", "--version", "1.0.0")
+	require.NoError(t, err)
+	require.Equal(t, "id: from-cache\n", stdout, "a project .grcli.yaml file: key must not select a bundle member in cat")
+	require.Contains(t, stderr, "ignoring config", "the ignored project config should earn a migration warning")
 }
 
 func TestNoteCatOmittedImports(t *testing.T) {

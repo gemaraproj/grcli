@@ -5,6 +5,28 @@ change bumps the minor version.
 
 ## [Unreleased]
 
+### Changed — BREAKING
+
+- **The per-project `./.grcli.yaml` config layer is removed (ADR-0044).** Config
+  now resolves from `--flag` > `GRCLI_*` env > user-global
+  `~/.config/grcli/config.yaml` > built-in default; the repo-local file is no
+  longer read. A committed config file must not be able to steer where a
+  publish/verify tool talks. **Migration:** move any settings from
+  `./.grcli.yaml` to `~/.config/grcli/config.yaml` — a lingering `./.grcli.yaml`
+  prints a warning until removed.
+
+### Added
+
+- **`grcli verify` defaults `--certificate-oidc-issuer` to
+  `https://token.actions.githubusercontent.com`** (ADR-0044). Keyless
+  verification of a GitHub-Actions-signed bundle then needs only
+  `--certificate-identity`. Override the issuer via the flag, the
+  `GRCLI_CERTIFICATE_OIDC_ISSUER` env, or the user-global config for GitHub
+  Enterprise, another CI provider, or an OIDC proxy. cosign still checks the
+  issuer, so a wrong value fails closed (it rejects, never falsely accepts).
+
+## [0.3.0] - 2026-07-02
+
 ### Added
 
 - **`grcli cat`** — prints an artifact's Gemara content to stdout without writing

@@ -48,7 +48,7 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 	cmd.PersistentFlags().StringVar(&cfgFile, "config", "",
-		"config file (default: ./.grcli.yaml merged over $XDG_CONFIG_HOME/grcli/config.yaml, or ~/.config/grcli/config.yaml)")
+		"config file (default: $XDG_CONFIG_HOME/grcli/config.yaml, or ~/.config/grcli/config.yaml)")
 
 	cmd.AddCommand(newPublishCmd(v))
 	cmd.AddCommand(newUnpackCmd(v))
@@ -69,14 +69,16 @@ func newRootCmd() *cobra.Command {
 // whenever $GRCLI_CACHE is set. The env form is GRCLI_CACHE_ENABLED.
 const flagCacheEnabled = "cache-enabled"
 
-// loadConfig wires the GRCLI_* env prefix and layers config files (ADR-0043).
-// Precedence, highest first: explicit flag > GRCLI_* env > per-project
-// ./.grcli.yaml > user-global $XDG_CONFIG_HOME/grcli/config.yaml > built-in
-// default. The user-global file is read first as the base, then the project
-// file is MERGED on top, so a personal preference holds unless a project (or
-// env/flag) overrides it. --config <file> selects a single file and bypasses
-// the search. A missing file is not an error; any other read error is a warning
-// (on warn, the command's stderr) so the command still runs on env + flags.
+// loadConfig wires the GRCLI_* env prefix and reads the single user-global
+// config file (ADR-0043, amended by ADR-0044). Precedence, highest first:
+// explicit flag > GRCLI_* env > user-global $XDG_CONFIG_HOME/grcli/config.yaml
+// (fallback ~/.config/grcli/config.yaml) > built-in default. There is NO
+// per-project layer: a repo-local ./.grcli.yaml is deliberately not read
+// (ADR-0044) — a committed config file steering a publish/verify tool is a
+// footgun — so a present one earns a migration warning instead. --config
+// <file> selects a single file and bypasses the search. A missing file is not
+// an error; any other read error is a warning (on the command's stderr) so the
+// command still runs on env + flags.
 func loadConfig(v *viper.Viper, cfgFile string, warn io.Writer) error {
 	v.SetConfigType("yaml")
 	v.SetEnvPrefix("GRCLI")
@@ -92,55 +94,57 @@ func loadConfig(v *viper.Viper, cfgFile string, warn io.Writer) error {
 		return nil
 	}
 
-	// Base layer: the user-global file.
-	if g := userGlobalConfigPath(); g != "" {
-		warnIgnoredLegacyConfig(g, warn)
-		if fileExists(g) {
-			v.SetConfigFile(g)
-			if err := v.ReadInConfig(); err != nil {
-				fmt.Fprintln(warn, "grcli: warning: reading user config:", err)
-			}
-		}
+	g := userGlobalConfigPath()
+	if g == "" {
+		return nil // home dir unresolved — run on env + flags only
 	}
-	// Override layer: the per-project file, merged on top.
-	if fileExists(projectConfigFile) {
-		v.SetConfigFile(projectConfigFile)
-		if err := v.MergeInConfig(); err != nil {
-			fmt.Fprintln(warn, "grcli: warning: reading project config:", err)
+	warnIgnoredConfig(g, warn)
+	if fileExists(g) {
+		v.SetConfigFile(g)
+		if err := v.ReadInConfig(); err != nil {
+			fmt.Fprintln(warn, "grcli: warning: reading user config:", err)
 		}
 	}
 	return nil
 }
 
-// projectConfigFile is the per-project (repo-local) config, read from the
-// current directory.
+// projectConfigFile is the repo-local config path. As of ADR-0044 grcli no
+// longer reads it; the constant remains so warnIgnoredConfig can nudge anyone
+// migrating from the per-project layer to the user-global file.
 const projectConfigFile = ".grcli.yaml"
 
-// warnIgnoredLegacyConfig warns when a config file from a retired pre-ADR-0043
-// search location exists and would have been the ACTIVE config under the old
-// first-match search (no project file, no new global file) — silence there
-// would mean e.g. a hub URL quietly reverting to the prod default. Retired
-// locations: `.grcli.yaml` inside the XDG grcli dir (the old search used the
-// config name ".grcli" for every path) and the home-root `~/.grcli.yaml`.
-func warnIgnoredLegacyConfig(globalPath string, w io.Writer) {
-	if fileExists(projectConfigFile) || fileExists(globalPath) {
-		return // old and new behavior read the same (or a newer) file; no surprise
+// warnIgnoredConfig warns about config files sitting at locations grcli no
+// longer reads, so a settings file isn't silently ignored after a layout
+// change. Retired locations: the per-project ./.grcli.yaml (ADR-0044) and the
+// pre-ADR-0043 dotfiles (~/.grcli.yaml and $XDG_CONFIG_HOME/grcli/.grcli.yaml).
+// The only blessed location is the user-global config.yaml (globalPath).
+func warnIgnoredConfig(globalPath string, w io.Writer) {
+	// Each candidate carries a display path (friendly, e.g. relative
+	// ./.grcli.yaml) and an absolute path used only for dedup — running grcli
+	// from $HOME makes ./.grcli.yaml and ~/.grcli.yaml the same file, which
+	// must warn once, not twice.
+	type candidate struct{ display, abs string }
+	candidates := []candidate{}
+	if abs, err := filepath.Abs(projectConfigFile); err == nil {
+		candidates = append(candidates, candidate{projectConfigFile, abs})
 	}
-	var legacies []string
-	// The old search only looked inside $XDG_CONFIG_HOME/grcli when XDG was
-	// set; with XDG unset, ~/.config/grcli was never a search path, so a
-	// dotfile there was never functional and gets no warning.
+	// The pre-0043 search only looked inside $XDG_CONFIG_HOME/grcli when XDG
+	// was set; with XDG unset, ~/.config/grcli was never a search path.
 	if os.Getenv("XDG_CONFIG_HOME") != "" {
-		legacies = append(legacies, filepath.Join(filepath.Dir(globalPath), ".grcli.yaml"))
+		p := filepath.Join(filepath.Dir(globalPath), ".grcli.yaml")
+		candidates = append(candidates, candidate{p, p})
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		legacies = append(legacies, filepath.Join(home, ".grcli.yaml"))
+		p := filepath.Join(home, ".grcli.yaml")
+		candidates = append(candidates, candidate{p, p})
 	}
-	for _, legacy := range legacies {
-		if fileExists(legacy) {
-			fmt.Fprintf(w, "grcli: warning: ignoring legacy config %s — move it to %s\n", legacy, globalPath)
-			return
+	seen := map[string]bool{}
+	for _, c := range candidates {
+		if seen[c.abs] || !fileExists(c.abs) {
+			continue
 		}
+		seen[c.abs] = true
+		fmt.Fprintf(w, "grcli: warning: ignoring config %s — grcli reads only %s; move your settings there\n", c.display, globalPath)
 	}
 }
 

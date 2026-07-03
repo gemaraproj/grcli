@@ -85,10 +85,9 @@ grcli validate -f controls.yaml --spec /path/to/gemara
 # Publish — picks up the stored login token; signs by default
 grcli publish -f controls.yaml
 
-# Verify a published bundle (keyless example)
+# Verify a published bundle (keyless; issuer defaults to GitHub Actions)
 grcli verify --repository myorg/my-controls --version 1.0.0 \
-  --certificate-identity https://github.com/myorg/my-controls/.github/workflows/publish.yml@refs/heads/main \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  --certificate-identity https://github.com/myorg/my-controls/.github/workflows/publish.yml@refs/heads/main
 
 # Unpack a bundle to disk
 grcli unpack --repository myorg/my-controls --version 1.0.0 --output ./unpacked
@@ -128,11 +127,12 @@ so a cache hit can never be stale. The cache lives at `$GRCLI_CACHE` (default
 ### Configuration
 
 `grcli` reads config from, highest precedence first: a `--flag`, a `GRCLI_*`
-env var, the per-project `./.grcli.yaml`, and the user-global
-`$XDG_CONFIG_HOME/grcli/config.yaml` (falling back to
-`~/.config/grcli/config.yaml`). The project file is **merged over** the
-user-global file, so a personal preference holds unless a project (or env/flag)
-overrides it. `--config <file>` selects a single file and bypasses the search.
+env var, and the user-global `$XDG_CONFIG_HOME/grcli/config.yaml` (falling back
+to `~/.config/grcli/config.yaml`). There is **no per-project layer**: a
+repo-local `./.grcli.yaml` is deliberately not read (ADR-0044) — a committed
+file must not be able to steer where a publish/verify tool talks — and a present
+one prints a migration warning until removed. `--config <file>` selects a single
+file and bypasses the search.
 
 Keys (env form in parentheses):
 
@@ -141,6 +141,10 @@ Keys (env form in parentheses):
 - `url` (`GRCLI_URL`) — the hub base URL. Config keys generally use the same
   name as their flag (env form: `GRCLI_` + the name upper-snaked); see
   `grcli <command> --help` for the flag list.
+- `certificate-oidc-issuer` (`GRCLI_CERTIFICATE_OIDC_ISSUER`) — the OIDC issuer
+  `grcli verify` expects for keyless verification. Defaults to
+  `https://token.actions.githubusercontent.com`; set it only for GitHub
+  Enterprise, another CI provider, or an OIDC proxy.
 
 > **Registry credentials are env-only, never config keys**: set
 > `GRCLI_REGISTRY_TOKEN` (or `GRCLI_REGISTRY_USERNAME` +
