@@ -396,23 +396,29 @@ func resolveHubIdentity(ctx context.Context, url, repository string, policy *ver
 	return nil
 }
 
-// parseKeylessIdentity splits a hub-recorded canonical signer identity —
-// "keyless:<oidc-issuer>#<workflow-path>", ref-stripped
-// (grc-store-protocol/identity) — into its issuer and workflow path. It rejects
-// unknown schemes (e.g. the defined-but-unwired "key:sha256:<fpr>") and
+// parseKeylessIdentity splits a hub-recorded canonical signer identity into
+// its issuer and workflow path by delegating to identity.ParseKeyless — the
+// format owner's inverse of CanonicalKeylessIdentity, so producer and parser
+// cannot drift — and maps its typed sentinels to actionable grcli messages. It
+// rejects unknown schemes (e.g. the defined-but-unwired "key:sha256:<fpr>") and
 // malformed values so a garbled record fails loudly rather than producing a
-// bogus cosign policy.
+// bogus verification policy.
 func parseKeylessIdentity(canonical string) (issuer, workflowPath string, err error) {
-	rest, ok := strings.CutPrefix(canonical, identity.KeylessScheme)
-	if !ok {
-		scheme, _, hasScheme := strings.Cut(canonical, ":")
-		if hasScheme {
+	issuer, workflowPath, err = identity.ParseKeyless(canonical)
+	switch {
+	case errors.Is(err, identity.ErrUnknownScheme):
+		if scheme, _, hasScheme := strings.Cut(canonical, ":"); hasScheme && scheme != "" {
 			return "", "", fmt.Errorf("hub signer identity %q uses unsupported scheme %q — only keyless identities can be verified without explicit trust flags; pass --cosign-key or --certificate-identity", canonical, scheme)
 		}
 		return "", "", fmt.Errorf("hub signer identity %q is malformed (expected \"keyless:<issuer>#<workflow-path>\")", canonical)
+	case errors.Is(err, identity.ErrMissingSeparator):
+		return "", "", fmt.Errorf("hub signer identity %q is malformed (expected \"keyless:<issuer>#<workflow-path>\")", canonical)
+	case err != nil:
+		return "", "", fmt.Errorf("hub signer identity %q: %w", canonical, err)
 	}
-	issuer, workflowPath, ok = strings.Cut(rest, "#")
-	if !ok || issuer == "" || workflowPath == "" {
+	// ParseKeyless owns the format split; grcli additionally rejects empty
+	// halves — a pin with no issuer or no path cannot drive a cosign policy.
+	if issuer == "" || workflowPath == "" {
 		return "", "", fmt.Errorf("hub signer identity %q is malformed (expected \"keyless:<issuer>#<workflow-path>\")", canonical)
 	}
 	return issuer, workflowPath, nil
