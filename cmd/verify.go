@@ -20,6 +20,7 @@ import (
 	"github.com/revanite-io/grcli/internal/hub"
 	"github.com/revanite-io/grcli/internal/registry"
 	"github.com/revanite-io/grcli/internal/sign"
+	"github.com/revanite-io/grcli/internal/sigverify"
 )
 
 // Flag names specific to verify. flagURL / flagRepository /
@@ -27,6 +28,12 @@ import (
 const (
 	flagCertIdentity   = "certificate-identity"
 	flagCertOIDCIssuer = "certificate-oidc-issuer"
+	// flagTrustedRoot overrides the embedded Sigstore public-good
+	// trusted_root.json with one read from disk (ADR-0046 decision 4) — for
+	// air-gapped deployments or a private Sigstore instance. Env form
+	// GRCLI_TRUSTED_ROOT; there is no --flag, only the env / config key, since
+	// it is an ops-level override, not a per-invocation knob.
+	flagTrustedRoot = "trusted-root"
 )
 
 // defaultCertOIDCIssuer is the issuer assumed for keyless verification when
@@ -41,18 +48,22 @@ const defaultCertOIDCIssuer = "https://token.actions.githubusercontent.com"
 func newVerifyCmd(v *viper.Viper) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "verify",
-		Short: "Verify a remote Gemara bundle's cosign signature",
-		Long: `Verifies the cosign signature attached to a remote Gemara bundle by
-shelling out to 'cosign verify'. The bundle must already be pushed to a
-registry — cosign signatures live at the registry layer, not in the
-bundle bytes, so verifying a local OCI layout from 'publish --dry-run'
-is not supported.
+		Short: "Verify a remote Gemara bundle's signature",
+		Long: `Verifies the Sigstore signature attached to a remote Gemara bundle.
+Keyless verification runs IN-PROCESS (ADR-0046) — no external tools are
+required, just the grcli binary. The bundle must already be pushed to a
+registry: signatures live at the registry layer as an OCI 1.1 referrer, not in
+the bundle bytes, so verifying a local OCI layout from 'publish --dry-run' is
+not supported.
 
-Signatures use the Sigstore bundle format (cosign's --new-bundle-format),
-attached as an OCI 1.1 referrer, which this command always requests.
-Artifacts signed by an OLDER grcli — the legacy 'sha256-….sig' tag format —
-will NOT verify here; re-publish them to re-sign in the bundle format.
-Requires cosign >= 3.x on PATH.
+Signatures use the Sigstore bundle format (v0.3), attached as an OCI 1.1
+referrer. Artifacts signed by an OLDER grcli — the legacy 'sha256-….sig' tag
+format — will NOT verify here; re-publish them to re-sign in the bundle format.
+
+The pinned Sigstore public-good trust root is embedded in grcli and refreshed
+with each release. For an air-gapped deployment or a private Sigstore instance,
+point GRCLI_TRUSTED_ROOT (env or config key 'trusted-root') at a
+trusted_root.json on disk.
 
 With NO trust flags, verify runs in zero-flag mode (ADR-0045): it fetches
 the catalog record from the hub, reads the keyless signer identity the hub
@@ -62,17 +73,19 @@ that it came from the hub record, are printed before verification runs.
 This trusts the hub as the identity source; for an independent check, pass
 --certificate-identity (or --cosign-key) yourself.
 
-Passing --cosign-key (key-based verification, paired with publish's
---cosign-key) or --certificate-identity (keyless verification, paired with
-publish's GitHub-Actions OIDC flow) bypasses the hub lookup entirely. For
-keyless, the identity is typically the publishing workflow URL, e.g.
+Passing --certificate-identity (keyless verification, paired with publish's
+GitHub-Actions OIDC flow) bypasses the hub lookup entirely. The identity is
+typically the publishing workflow URL, e.g.
 https://github.com/<org>/<repo>/.github/workflows/publish.yml@refs/heads/main.
 --certificate-oidc-issuer defaults to https://token.actions.githubusercontent.com
 (the GitHub Actions issuer); set it — as a flag, GRCLI_CERTIFICATE_OIDC_ISSUER,
 or a user-global config key — only for GitHub Enterprise, another CI provider,
 or an OIDC proxy.
 
-Requires 'cosign' on PATH.
+Passing --cosign-key (key-based verification, paired with publish's
+--cosign-key) selects the one remaining path that shells out to 'cosign' — a
+niche publisher-shared-key mode. That path, and ONLY that path, still requires
+cosign >= 3.x on PATH.
 
 Examples:
   # Zero-flag: verify against the identity the hub recorded at ingest
@@ -122,29 +135,87 @@ func runVerify(cmd *cobra.Command, v *viper.Viper) error {
 		return err
 	}
 
-	// ADR-0031: cosign verify pulls the signature from the bearer-auth
-	// registry. Mint an anonymous pull token from the hub (when --url is
-	// set and no override is present) and pass it to cosign explicitly —
-	// the subprocess can't read GRCLI_REGISTRY_TOKEN from the environment.
+	// ADR-0031: the signature lives in the bearer-auth registry. Mint an
+	// anonymous pull token from the hub (when --url is set and no override is
+	// present) and export it via GRCLI_REGISTRY_TOKEN. The in-process oras fetch
+	// reads it through the Docker credential chain (internal/registry), and
+	// key-mode cosign — the one remaining subprocess — gets it as an explicit
+	// flag, since the subprocess can't read the environment token.
 	policy.registryToken, err = ensureRegistryToken(ctx, v.GetString(flagURL), "", v.GetString(flagRepository), []string{"pull"})
 	if err != nil {
 		return fmt.Errorf("fetching registry pull token: %w", err)
 	}
 
-	if _, err := exec.LookPath("cosign"); err != nil {
-		return errors.New("cosign binary not found on PATH — install from https://docs.sigstore.dev/cosign/installation/")
-	}
-
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "verifying %s (%s)\n", policy.reference, policy.modeDescription())
-	return runCosignVerify(ctx, policy.cosignArgs(), out)
+
+	// Key-based verification is the ONLY path that still shells out to cosign
+	// (ADR-0046 decision 5): a niche publisher-shared-key mode the hub doesn't
+	// pin yet. The cosign prerequisite now applies exclusively here.
+	if policy.keyPath != "" {
+		if _, err := exec.LookPath("cosign"); err != nil {
+			return errors.New("cosign binary not found on PATH — required only for --cosign-key (key-based) verification; " +
+				"install from https://docs.sigstore.dev/cosign/installation/ (keyless verification needs no external tools)")
+		}
+		return runCosignVerify(ctx, policy.cosignArgs(), out)
+	}
+
+	// Keyless verification (explicit --certificate-identity and zero-flag
+	// hub-lookup) runs in-process against real Sigstore (ADR-0046) — no cosign.
+	return runKeylessVerify(ctx, v, policy, out)
+}
+
+// runKeylessVerify performs in-process keyless verification (ADR-0046): it
+// builds a sigstore-go verifier over the pinned (or GRCLI_TRUSTED_ROOT-override)
+// trust root, discovers the signature bundle as an OCI referrer of the artifact
+// manifest, and verifies it against both the artifact digest and the pinned
+// signer identity (exact SAN for explicit mode, anchored SAN regexp for
+// hub-lookup mode). The pre-verify announcement has already printed WHO/why is
+// trusted; on success it prints the verified identity as confirmation.
+func runKeylessVerify(ctx context.Context, v *viper.Viper, policy verifyPolicy, out io.Writer) error {
+	verifier, err := newSigstoreVerifier(v)
+	if err != nil {
+		return fmt.Errorf("initializing verifier: %w", err)
+	}
+	bundleJSON, artifactDigest, err := registry.FetchSignatureBundle(ctx, policy.registryHost, policy.repository, policy.version)
+	if err != nil {
+		return fmt.Errorf("discovering signature: %w", err)
+	}
+	res, err := verifier.Verify(ctx, bundleJSON, artifactDigest, policy.identityPolicy())
+	if errors.Is(err, sigverify.ErrUnsigned) {
+		return fmt.Errorf("%s has no signature attached in the registry — nothing to verify (was it published with --no-sign?)", policy.reference)
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "verified: %s\n", res.Identity)
+	return nil
+}
+
+// newSigstoreVerifier builds the in-process verifier, honoring the
+// GRCLI_TRUSTED_ROOT override (ADR-0046 decision 4). A zero timeout selects the
+// package default. Both constructors require SCTs — the production posture is
+// never relaxed off the embedded/override root.
+func newSigstoreVerifier(v *viper.Viper) (*sigverify.Verifier, error) {
+	if path := v.GetString(flagTrustedRoot); path != "" {
+		return sigverify.NewVerifierFromFile(path, 0)
+	}
+	return sigverify.NewVerifier(0)
 }
 
 // verifyPolicy bundles the resolved registry coordinates with the trust
 // material used to verify the signature.
 type verifyPolicy struct {
-	reference string // <registry>/<repository>:<tag>
-	keyPath   string // populated for key-based verification
+	reference string // <registry>/<repository>:<tag> — bare-host, for display + cosign
+	// registryHost / repository / version are the split coordinates the
+	// in-process keyless fetch needs (internal/registry.FetchSignatureBundle
+	// resolves the tag, discovers the signature referrer). registryHost keeps
+	// any http(s):// scheme the hub advertised so plain-HTTP local registries
+	// propagate to oras (newRemoteRepo strips the scheme + sets PlainHTTP).
+	registryHost string
+	repository   string
+	version      string
+	keyPath      string // populated for key-based verification
 	// identity is the exact keyless signer identity for --certificate-identity
 	// (explicit-flag keyless mode). Empty in key mode and in hub-lookup mode.
 	identity string
@@ -174,15 +245,16 @@ func (p verifyPolicy) modeDescription() string {
 	}
 }
 
+// cosignArgs builds the argv for the ONLY remaining cosign shell-out:
+// --cosign-key (key-based) verification (ADR-0046 decision 5). The keyless
+// paths verify in-process and never reach here. grcli signs with the Sigstore
+// bundle format (bundle-as-OCI-referrer), so cosign must expect it too — the
+// flag string is the SAME exported constant the sign side uses, so they can't
+// silently drift (sign.FlagNewBundleFormat, ADR-0035).
 func (p verifyPolicy) cosignArgs() []string {
-	// grcli signs with the Sigstore bundle format (bundle-as-OCI-referrer), so
-	// verification must expect it too. A bundle signature does not verify against
-	// the legacy `.sig` path; the two are a matched producer/consumer pair. The
-	// flag string is the SAME exported constant the sign side uses, so they can't
-	// silently drift (sign.FlagNewBundleFormat, ADR-0035).
 	args := []string{"verify", sign.FlagNewBundleFormat}
 	// cosign verify pulls the signature from the registry, which now
-	// requires a bearer token (ADR-0031). Unlike the oras path, the
+	// requires a bearer token (ADR-0031). Unlike the in-process oras path, the
 	// cosign subprocess can't read GRCLI_REGISTRY_TOKEN, so pass it
 	// explicitly when we minted one.
 	if p.registryToken != "" {
@@ -191,17 +263,23 @@ func (p verifyPolicy) cosignArgs() []string {
 	if p.plainHTTP {
 		args = append(args, "--allow-http-registry")
 	}
-	switch {
-	case p.keyPath != "":
-		args = append(args, "--key", p.keyPath)
-	case p.identityRegexp != "":
-		// Hub-lookup mode: the pin is ref-stripped, so match the workflow path
-		// under any ref via a regexp anchored to that exact path (ADR-0045).
-		args = append(args, "--certificate-identity-regexp", p.identityRegexp, "--certificate-oidc-issuer", p.issuer)
-	default:
-		args = append(args, "--certificate-identity", p.identity, "--certificate-oidc-issuer", p.issuer)
-	}
+	args = append(args, "--key", p.keyPath)
 	return append(args, p.reference)
+}
+
+// identityPolicy translates the resolved keyless trust material into the
+// in-process sigstore-go identity pin. Explicit mode carries an exact SAN
+// (p.identity); hub-lookup mode carries the anchored SAN regexp
+// (p.identityRegexp) — exactly one is set. The issuer is always exact. These are
+// the same fields cosignArgs used to hand cosign, so the identity semantics are
+// byte-identical to the old --certificate-identity / --certificate-identity-regexp
+// + --certificate-oidc-issuer arguments.
+func (p verifyPolicy) identityPolicy() sigverify.IdentityPolicy {
+	return sigverify.IdentityPolicy{
+		SAN:       p.identity,
+		SANRegexp: p.identityRegexp,
+		Issuer:    p.issuer,
+	}
 }
 
 func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, error) {
@@ -260,17 +338,21 @@ func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, err
 	// local dev zot), then normalize to a bare host — cosign rejects a
 	// reference that includes a scheme.
 	plainHTTP := strings.HasPrefix(registryHost, "http://")
+	rawRegistry := registryHost // keeps the scheme for the in-process oras fetch
 	registryHost = registry.NormalizeRegistryHost(registryHost)
 	if registryHost == "" {
 		return verifyPolicy{}, errors.New("hub discovery returned no registry URL")
 	}
 
 	policy := verifyPolicy{
-		reference: fmt.Sprintf("%s/%s:%s", registryHost, repository, version),
-		keyPath:   keyPath,
-		identity:  identity,
-		issuer:    issuer,
-		plainHTTP: plainHTTP,
+		reference:    fmt.Sprintf("%s/%s:%s", registryHost, repository, version),
+		registryHost: rawRegistry,
+		repository:   repository,
+		version:      version,
+		keyPath:      keyPath,
+		identity:     identity,
+		issuer:       issuer,
+		plainHTTP:    plainHTTP,
 	}
 
 	if hubLookupMode {

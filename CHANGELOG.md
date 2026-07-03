@@ -5,6 +5,30 @@ change bumps the minor version.
 
 ## [Unreleased]
 
+### Changed
+
+- **Keyless `grcli verify` now verifies in-process — `cosign` is no longer a
+  consumer prerequisite** (ADR-0046). Both keyless paths (zero-flag
+  verify-by-coordinate and explicit `--certificate-identity`) verify with the
+  embedded `sigstore-go` library and the same pinned trust root + policy the hub
+  uses (Rekor inclusion, observer timestamps, SCTs required), enforcing the
+  expected signer identity in the verification policy. The signature is
+  discovered in-process as an OCI referrer of the artifact manifest, so the old
+  `--registry-token` subprocess plumbing is gone from the keyless paths. The
+  pinned Sigstore public-good `trusted_root.json` is embedded and refreshed with
+  each release; override it via `GRCLI_TRUSTED_ROOT` / the `trusted-root` config
+  key (a `trusted_root.json` path) for air-gapped or private-Sigstore
+  deployments. Only key-based `verify --cosign-key` still shells out to
+  `cosign` ≥ 3.x. Verification behavior and identity semantics are unchanged —
+  the same bundles that verified before verify the same way now.
+
+### Added
+
+- **`GRCLI_TRUSTED_ROOT` / `trusted-root` config key** (ADR-0046) — overrides the
+  embedded Sigstore trust root with a `trusted_root.json` read from disk, for
+  air-gapped deployments or a private Sigstore instance. Unset, keyless verify
+  uses grcli's pinned embedded public-good root.
+
 ### Changed — BREAKING
 
 - **The per-project `./.grcli.yaml` config layer is removed (ADR-0044).** Config
@@ -23,9 +47,9 @@ change bumps the minor version.
   identity the hub verified and pinned at ingest, and verifies against it — so a
   consumer needs no prior knowledge of the publishing workflow. The identity, and
   that it came from the hub record, are printed before verification runs (trust
-  in the hub is visible, never silent). The ref-stripped pin is matched with
-  `cosign --certificate-identity-regexp '^<escaped workflow path>@'`, admitting
-  any git ref of that exact workflow but nothing wider. If the hub has no recorded
+  in the hub is visible, never silent). The ref-stripped pin is matched with an
+  anchored SAN regexp `'^<escaped workflow path>@'`, admitting any git ref of
+  that exact workflow but nothing wider. If the hub has no recorded
   identity (an artifact predating hub-side verification), verify fails with a
   clear pointer to the explicit flags. Passing `--cosign-key` or
   `--certificate-identity` bypasses the hub lookup entirely — the independent,
@@ -35,7 +59,7 @@ change bumps the minor version.
   verification of a GitHub-Actions-signed bundle then needs only
   `--certificate-identity`. Override the issuer via the flag, the
   `GRCLI_CERTIFICATE_OIDC_ISSUER` env, or the user-global config for GitHub
-  Enterprise, another CI provider, or an OIDC proxy. cosign still checks the
+  Enterprise, another CI provider, or an OIDC proxy. verify still checks the
   issuer, so a wrong value fails closed (it rejects, never falsely accepts).
 
 ## [0.3.0] - 2026-07-02

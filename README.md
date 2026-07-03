@@ -41,8 +41,10 @@ cosign verify ghcr.io/revanite-io/grcli:latest \
 
 Some commands shell out to external tools:
 
-- **`cosign`** on `PATH` — `publish` (signing) and `verify`.
-  https://docs.sigstore.dev/cosign/installation/
+- **`cosign` ≥ 3.x** on `PATH` — `publish` (signing) and key-based
+  `verify --cosign-key` only. **Keyless `verify` needs no external tools**: it
+  verifies in-process against Sigstore (ADR-0046), so consumers can verify with
+  just the `grcli` binary. https://docs.sigstore.dev/cosign/installation/
 - **`cue`** on `PATH` — `validate`. https://cuelang.org
 - **A Gemara spec checkout** — `validate`.
   `git clone https://github.com/gemaraproj/gemara`
@@ -70,7 +72,7 @@ Run `grcli <command> --help` for the full flag list. The typical flow is
 | `login` | Sign in to a hub via OIDC device flow; stores tokens for `publish`. |
 | `validate` | Check YAML against the Gemara spec via `cue vet`. |
 | `publish` | Pack an artifact + provenance into a signed OCI bundle, push it, and notify the hub. |
-| `verify` | Verify a remote bundle's cosign signature — with no trust flags, against the signer identity the hub recorded at ingest. |
+| `verify` | Verify a remote bundle's Sigstore signature (keyless: in-process, no cosign) — with no trust flags, against the signer identity the hub recorded at ingest. |
 | `unpack` | Pull a bundle and write its files + manifest to disk. |
 | `cat` | Print an artifact's Gemara content to stdout (no files written) — for piping into `yq`. |
 | `logout` | Forget locally-stored credentials. |
@@ -150,6 +152,10 @@ Keys (env form in parentheses):
   `grcli verify` expects for keyless verification. Defaults to
   `https://token.actions.githubusercontent.com`; set it only for GitHub
   Enterprise, another CI provider, or an OIDC proxy.
+- `trusted-root` (`GRCLI_TRUSTED_ROOT`) — path to a `trusted_root.json` that
+  overrides the embedded Sigstore public-good trust root for keyless `verify`
+  (ADR-0046). For air-gapped deployments or a private Sigstore instance only;
+  unset, grcli uses its pinned embedded root.
 
 > **Registry credentials are env-only, never config keys**: set
 > `GRCLI_REGISTRY_TOKEN` (or `GRCLI_REGISTRY_USERNAME` +
@@ -161,14 +167,18 @@ Keys (env form in parentheses):
 
 Signing is required by default: if `cosign` isn't available, `publish`
 fails *before* pushing, so nothing unsigned reaches the registry. Pass
-`--no-sign` to deliberately opt out.
+`--no-sign` to deliberately opt out. (Signing still shells out to
+`cosign` ≥ 3.x — the prerequisite lives with publishers, not consumers.)
 
-Catalog signatures use the **Sigstore bundle format** (cosign's
-`--new-bundle-format`, attached as an OCI 1.1 referrer), which `grcli
-verify` always requests — so to verify a catalog manually use `cosign
-verify --new-bundle-format …`, not the bare `cosign verify` shown above
-for the grcli binary. Artifacts signed by an older grcli (the legacy
-`.sig` tag format) must be re-published to re-sign. Requires cosign ≥ 3.x.
+Keyless `verify` runs **in-process** against Sigstore (ADR-0046): no `cosign`,
+no version-skew caveats, just the `grcli` binary. It embeds the pinned Sigstore
+public-good trust root, refreshed with each grcli release; for an air-gapped or
+private-Sigstore deployment, point `GRCLI_TRUSTED_ROOT` (env, or the
+`trusted-root` config key) at a `trusted_root.json` on disk. Catalog signatures
+use the **Sigstore bundle format** (v0.3, attached as an OCI 1.1 referrer);
+artifacts signed by an older grcli (the legacy `.sig` tag format) must be
+re-published to re-sign. Only key-based `verify --cosign-key` still shells out
+to `cosign` ≥ 3.x — a niche publisher-shared-key path.
 
 ## Publishing from GitHub Actions
 

@@ -13,6 +13,8 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
+
+	"github.com/revanite-io/grcli/internal/sigverify"
 )
 
 // Happy-path verify tests would need a real signed registry image and a
@@ -125,8 +127,8 @@ func TestResolveVerifyPolicy_URL(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, defaultCertOIDCIssuer, policy.issuer,
 			"keyless verify with no --certificate-oidc-issuer must default to the GitHub Actions issuer")
-		require.Contains(t, policy.cosignArgs(), defaultCertOIDCIssuer,
-			"the defaulted issuer must reach cosign")
+		require.Equal(t, defaultCertOIDCIssuer, policy.identityPolicy().Issuer,
+			"the defaulted issuer must reach the in-process verifier")
 	})
 
 	t.Run("explicit issuer overrides the default", func(t *testing.T) {
@@ -145,6 +147,10 @@ func TestResolveVerifyPolicy_URL(t *testing.T) {
 	})
 }
 
+// TestVerifyPolicy_CosignArgs now covers ONLY key-mode: keyless verification
+// moved in-process (ADR-0046), so cosign is the sole remaining shell-out and it
+// only ever runs with --key. The keyless trust material is carried by
+// identityPolicy() instead (TestVerifyPolicy_IdentityPolicy below).
 func TestVerifyPolicy_CosignArgs(t *testing.T) {
 	t.Run("key-mode", func(t *testing.T) {
 		p := verifyPolicy{
@@ -157,31 +163,33 @@ func TestVerifyPolicy_CosignArgs(t *testing.T) {
 			"reg.example/team/artifact:1.0.0",
 		}, p.cosignArgs())
 	})
-	t.Run("keyless-mode", func(t *testing.T) {
+}
+
+// TestVerifyPolicy_IdentityPolicy pins the mapping from the resolved policy to
+// the in-process sigstore-go identity pin — the security-critical seam that
+// replaced cosign's --certificate-identity / --certificate-identity-regexp +
+// --certificate-oidc-issuer flags (ADR-0046 decision 2). The exact-vs-regexp
+// choice and the issuer must carry through byte-for-byte.
+func TestVerifyPolicy_IdentityPolicy(t *testing.T) {
+	t.Run("explicit keyless mode → exact SAN, exact issuer", func(t *testing.T) {
 		p := verifyPolicy{
-			reference: "reg.example/team/artifact:1.0.0",
-			identity:  "https://github.com/team/repo/.github/workflows/publish.yml@refs/heads/main",
-			issuer:    "https://token.actions.githubusercontent.com",
+			identity: "https://github.com/team/repo/.github/workflows/publish.yml@refs/heads/main",
+			issuer:   "https://token.actions.githubusercontent.com",
 		}
-		require.Equal(t, []string{
-			"verify", "--new-bundle-format",
-			"--certificate-identity", "https://github.com/team/repo/.github/workflows/publish.yml@refs/heads/main",
-			"--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
-			"reg.example/team/artifact:1.0.0",
-		}, p.cosignArgs())
+		require.Equal(t, sigverify.IdentityPolicy{
+			SAN:    "https://github.com/team/repo/.github/workflows/publish.yml@refs/heads/main",
+			Issuer: "https://token.actions.githubusercontent.com",
+		}, p.identityPolicy())
 	})
-	t.Run("hub-lookup-mode uses --certificate-identity-regexp", func(t *testing.T) {
+	t.Run("hub-lookup mode → anchored SAN regexp, exact issuer", func(t *testing.T) {
 		p := verifyPolicy{
-			reference:      "reg.example/team/artifact:1.0.0",
 			identityRegexp: `^https://github\.com/team/repo/\.github/workflows/publish\.yml@`,
 			issuer:         "https://token.actions.githubusercontent.com",
 		}
-		require.Equal(t, []string{
-			"verify", "--new-bundle-format",
-			"--certificate-identity-regexp", `^https://github\.com/team/repo/\.github/workflows/publish\.yml@`,
-			"--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
-			"reg.example/team/artifact:1.0.0",
-		}, p.cosignArgs())
+		require.Equal(t, sigverify.IdentityPolicy{
+			SANRegexp: `^https://github\.com/team/repo/\.github/workflows/publish\.yml@`,
+			Issuer:    "https://token.actions.githubusercontent.com",
+		}, p.identityPolicy())
 	})
 }
 
@@ -258,8 +266,9 @@ func TestResolveVerifyPolicy_HubLookup(t *testing.T) {
 		// only where a literal '.' sits must not match.
 		require.False(t, re.MatchString("https://github.com/acme/repoXname/.github/workflows/publish.yml@refs/tags/v1"), "escaped '.' must be a literal, not a wildcard")
 
-		require.Contains(t, policy.cosignArgs(), "--certificate-identity-regexp")
-		require.Contains(t, policy.cosignArgs(), wantRegexp)
+		// The resolved policy feeds the in-process matcher (not cosign) — the
+		// anchored regexp becomes the SAN-regexp pin, issuer stays exact.
+		require.Equal(t, sigverify.IdentityPolicy{SANRegexp: wantRegexp, Issuer: issuer}, policy.identityPolicy())
 		require.Equal(t, "keyless identity from hub record: "+canonical+", issuer "+issuer, policy.modeDescription())
 	})
 

@@ -8,15 +8,21 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/gemaraproj/go-gemara/bundle"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/revanite-io/grc-store-protocol/limits"
+	"github.com/revanite-io/grc-store-protocol/mediatype"
 	"oras.land/oras-go/v2"
+	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/content/oci"
+	"oras.land/oras-go/v2/registry"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
@@ -155,6 +161,108 @@ func stripScheme(in string) (host string, plainHTTP bool) {
 func NormalizeRegistryHost(in string) string {
 	host, _ := stripScheme(in)
 	return host
+}
+
+// maxSignatureBlobBytes caps the referrer manifest and bundle-layer reads
+// during signature discovery. Both are tiny JSON blobs; the artifact's own
+// content layers are never read here. Shares the wire-contract's ingest cap so
+// grcli and the hub agree on what "too big to be a signature" means.
+const maxSignatureBlobBytes = limits.MaxPluginBlobBytes
+
+// FetchSignatureBundle resolves <registry>/<repository>:<tag> to its manifest
+// and returns the raw Sigstore bundle bytes attached as an OCI referrer, plus
+// the manifest digest the signature is bound to (the value the verifier's
+// artifact-digest policy checks). It returns (nil, digest, nil) when no
+// signature referrer is present — a nil bundle is the caller's ErrUnsigned
+// signal, NOT an error; an error is reserved for a genuine transport/parse
+// failure so the caller can fail closed (we cannot claim "unsigned" if we could
+// not look).
+//
+// Discovery filters referrers on mediatype.CosignSignReferrer, NOT
+// mediatype.SigstoreBundle: grcli signs catalogs with
+// `cosign sign --new-bundle-format`, which stamps the referrer's artifactType as
+// the cosign-sign value even though the bundle BLOB inside is a v0.3 bundle. This
+// is the documented catalog/plugin discovery divergence (grc-store-protocol/
+// mediatype "RULE — do not cross these"); filtering on SigstoreBundle here would
+// find zero referrers and treat every signed catalog as unsigned.
+//
+// Auth flows through the same credential chain as UnpackRemote (the
+// GRCLI_REGISTRY_TOKEN the caller minted via ensureRegistryToken is read by
+// dockerCredentials), so no token needs threading through this signature.
+func FetchSignatureBundle(ctx context.Context, registryHost, repository, tag string) (bundleJSON []byte, artifactDigest string, err error) {
+	if tag == "" {
+		return nil, "", errors.New("tag is required")
+	}
+	repo, err := newRemoteRepo(registryHost, repository)
+	if err != nil {
+		return nil, "", err
+	}
+	subject, err := repo.Resolve(ctx, tag)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolving %s: %w", tag, err)
+	}
+	bundleJSON, err = discoverSignatureBundle(ctx, repo, subject)
+	if err != nil {
+		return nil, "", err
+	}
+	return bundleJSON, subject.Digest.String(), nil
+}
+
+// discoverSignatureBundle is the target-agnostic half of FetchSignatureBundle
+// (split out so it is unit-testable against an in-memory oras store, mirroring
+// the hub's ociref.SignatureBundle). It lists referrers of subject filtered on
+// mediatype.CosignSignReferrer — the catalog signature's artifactType — and
+// returns the raw bytes of the SigstoreBundle layer inside the first match, or
+// nil when no referrer is present (unsigned). An error is reserved for a genuine
+// transport/parse failure or a malformed referrer, so the caller fails closed.
+func discoverSignatureBundle(ctx context.Context, target oras.ReadOnlyTarget, subject ocispec.Descriptor) ([]byte, error) {
+	gs, ok := target.(content.ReadOnlyGraphStorage)
+	if !ok {
+		// A target that can't answer Predecessors can't have referrers
+		// discovered → treat as unsigned (the verifier maps nil to ErrUnsigned).
+		return nil, nil
+	}
+	refs, err := registry.Referrers(ctx, gs, subject, mediatype.CosignSignReferrer)
+	if err != nil {
+		return nil, fmt.Errorf("listing signature referrers: %w", err)
+	}
+	if len(refs) == 0 {
+		return nil, nil // unsigned — no referrer attached
+	}
+	// Use the first matching referrer: fetch its manifest, then return the layer
+	// blob whose media type is the Sigstore bundle JSON.
+	manifestBytes, err := fetchCapped(ctx, target, refs[0])
+	if err != nil {
+		return nil, fmt.Errorf("fetching signature manifest: %w", err)
+	}
+	var m ocispec.Manifest
+	if uerr := json.Unmarshal(manifestBytes, &m); uerr != nil {
+		return nil, fmt.Errorf("parsing signature manifest: %w", uerr)
+	}
+	for _, layer := range m.Layers {
+		if layer.MediaType == mediatype.SigstoreBundle {
+			blob, ferr := fetchCapped(ctx, target, layer)
+			if ferr != nil {
+				return nil, fmt.Errorf("fetching signature bundle: %w", ferr)
+			}
+			return blob, nil
+		}
+	}
+	// A referrer with the cosign artifactType but no bundle layer is a malformed
+	// signature, not "unsigned" — surface it rather than silently treating a
+	// present signature as absent.
+	return nil, fmt.Errorf("signature referrer %s carries no %s layer", refs[0].Digest, mediatype.SigstoreBundle)
+}
+
+// fetchCapped reads a descriptor's content with a small cap. Used only for the
+// referrer manifest and the bundle-JSON layer — both tiny.
+func fetchCapped(ctx context.Context, target oras.ReadOnlyTarget, desc ocispec.Descriptor) ([]byte, error) {
+	rc, err := target.Fetch(ctx, desc)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close() //nolint:errcheck
+	return io.ReadAll(io.LimitReader(rc, maxSignatureBlobBytes))
 }
 
 // UnpackLocal reads a Gemara bundle from an OCI image layout directory.
