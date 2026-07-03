@@ -3,7 +3,7 @@
 Notable changes to `grcli`. This project is pre-1.0; while on `v0.x`, a breaking
 change bumps the minor version.
 
-## [Unreleased]
+## [0.4.0] - 2026-07-03
 
 ### Changed
 
