@@ -17,7 +17,8 @@ Go module: `github.com/revanite-io/grcli`.
 
 ## Commands (`cmd/`)
 `login`/`logout` (OIDC device flow, credential storage) · `validate` (YAML vs Gemara spec via
-`cue vet`) · `publish` (pack + sign + push OCI bundle) · `verify` (cosign / Sigstore bundle) ·
+`cue vet`) · `publish` (pack + sign + push OCI bundle) · `verify` (cosign / Sigstore bundle;
+zero-flag mode verifies against the hub-recorded signer identity, ADR-0045) ·
 `unpack` (extract to a directory from OCI layout or registry) · `cat` (stream Gemara content to
 stdout, no files — read-only companion to `unpack`, ADR-0042) · `versions <ns>/<id>` (list
 published versions). Registered in `cmd/root.go`; one file per command (`publish.go`, `verify.go`,

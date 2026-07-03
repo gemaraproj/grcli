@@ -9,10 +9,13 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"github.com/revanite-io/grc-store-protocol/identity"
 
 	"github.com/revanite-io/grcli/internal/hub"
 	"github.com/revanite-io/grcli/internal/registry"
@@ -51,9 +54,17 @@ Artifacts signed by an OLDER grcli — the legacy 'sha256-….sig' tag format �
 will NOT verify here; re-publish them to re-sign in the bundle format.
 Requires cosign >= 3.x on PATH.
 
-You must specify either --cosign-key (key-based verification, paired
-with publish's --cosign-key) or --certificate-identity (keyless
-verification, paired with publish's GitHub-Actions OIDC flow). For
+With NO trust flags, verify runs in zero-flag mode (ADR-0045): it fetches
+the catalog record from the hub, reads the keyless signer identity the hub
+verified and pinned at ingest, and verifies against it — so a consumer needs
+no prior knowledge of the publishing workflow. The identity it trusted, and
+that it came from the hub record, are printed before verification runs.
+This trusts the hub as the identity source; for an independent check, pass
+--certificate-identity (or --cosign-key) yourself.
+
+Passing --cosign-key (key-based verification, paired with publish's
+--cosign-key) or --certificate-identity (keyless verification, paired with
+publish's GitHub-Actions OIDC flow) bypasses the hub lookup entirely. For
 keyless, the identity is typically the publishing workflow URL, e.g.
 https://github.com/<org>/<repo>/.github/workflows/publish.yml@refs/heads/main.
 --certificate-oidc-issuer defaults to https://token.actions.githubusercontent.com
@@ -61,20 +72,20 @@ https://github.com/<org>/<repo>/.github/workflows/publish.yml@refs/heads/main.
 or a user-global config key — only for GitHub Enterprise, another CI provider,
 or an OIDC proxy.
 
-The verification policy a publisher should register with grc.store is
-exactly this pair: a public key, or an (identity, issuer) tuple. (The
-grc.store registration UI for this is not yet shipped; for now, share
-the policy out-of-band with anyone who needs to verify your bundles.)
-
 Requires 'cosign' on PATH.
 
 Examples:
-  # Key-based
+  # Zero-flag: verify against the identity the hub recorded at ingest
+  grcli verify --url https://hub.grc.store \
+    --repository myorg/my-controls --version 1.0.0
+
+  # Key-based (bypasses the hub lookup)
   grcli verify --url https://hub.grc.store \
     --repository myorg/my-controls --version 1.0.0 \
     --cosign-key /keys/cosign.pub
 
-  # Keyless (GitHub Actions OIDC — issuer defaults to GitHub Actions)
+  # Keyless, asserting the identity yourself (bypasses the hub lookup;
+  # issuer defaults to GitHub Actions)
   grcli verify --url https://hub.grc.store \
     --repository myorg/my-controls --version 1.0.0 \
     --certificate-identity https://github.com/myorg/my-controls/.github/workflows/publish.yml@refs/heads/main
@@ -132,19 +143,35 @@ func runVerify(cmd *cobra.Command, v *viper.Viper) error {
 // verifyPolicy bundles the resolved registry coordinates with the trust
 // material used to verify the signature.
 type verifyPolicy struct {
-	reference     string // <registry>/<repository>:<tag>
-	keyPath       string // populated for key-based verification
-	identity      string // populated for keyless verification
-	issuer        string // populated for keyless verification
+	reference string // <registry>/<repository>:<tag>
+	keyPath   string // populated for key-based verification
+	// identity is the exact keyless signer identity for --certificate-identity
+	// (explicit-flag keyless mode). Empty in key mode and in hub-lookup mode.
+	identity string
+	// identityRegexp is the anchored regexp for --certificate-identity-regexp,
+	// populated only in hub-lookup mode (the ref-stripped pin admits any git
+	// ref but nothing wider than the exact workflow path). Empty otherwise.
+	identityRegexp string
+	issuer         string // populated for keyless verification (both modes)
+	// hubIdentity is the canonical identity string the hub recorded, kept for
+	// the pre-verify announcement so trust in the hub is visible, never silent.
+	// Non-empty only in hub-lookup mode (ADR-0045 decision 8).
+	hubIdentity   string
 	registryToken string // Distribution pull token for the bearer-auth registry (ADR-0031)
 	plainHTTP     bool   // registry speaks plain HTTP (local dev) — pass cosign --allow-http-registry
 }
 
 func (p verifyPolicy) modeDescription() string {
-	if p.keyPath != "" {
+	switch {
+	case p.keyPath != "":
 		return "key=" + p.keyPath
+	case p.identityRegexp != "":
+		// Hub-lookup mode: name the identity AND that the hub is its source, so
+		// the consumer sees exactly what they're trusting and where it came from.
+		return "keyless identity from hub record: " + p.hubIdentity + ", issuer " + p.issuer
+	default:
+		return "keyless identity=" + p.identity + " issuer=" + p.issuer
 	}
-	return "keyless identity=" + p.identity + " issuer=" + p.issuer
 }
 
 func (p verifyPolicy) cosignArgs() []string {
@@ -164,9 +191,14 @@ func (p verifyPolicy) cosignArgs() []string {
 	if p.plainHTTP {
 		args = append(args, "--allow-http-registry")
 	}
-	if p.keyPath != "" {
+	switch {
+	case p.keyPath != "":
 		args = append(args, "--key", p.keyPath)
-	} else {
+	case p.identityRegexp != "":
+		// Hub-lookup mode: the pin is ref-stripped, so match the workflow path
+		// under any ref via a regexp anchored to that exact path (ADR-0045).
+		args = append(args, "--certificate-identity-regexp", p.identityRegexp, "--certificate-oidc-issuer", p.issuer)
+	default:
 		args = append(args, "--certificate-identity", p.identity, "--certificate-oidc-issuer", p.issuer)
 	}
 	return append(args, p.reference)
@@ -200,17 +232,20 @@ func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, err
 	keylessMode := identity != ""
 	issuerSet := issuer != ""
 	switch {
-	case !keyMode && !keylessMode && !issuerSet:
-		return verifyPolicy{}, errors.New("either --cosign-key or --certificate-identity is required")
 	case keyMode && (keylessMode || issuerSet):
 		return verifyPolicy{}, errors.New("--cosign-key is mutually exclusive with --certificate-identity / --certificate-oidc-issuer")
 	case issuerSet && !keylessMode:
 		return verifyPolicy{}, errors.New("--certificate-oidc-issuer requires --certificate-identity")
 	}
+	// With no key and no identity we're in zero-flag mode (ADR-0045 decision 8):
+	// the signer identity comes from the hub's catalog record, not the flags.
+	// (A lone --certificate-oidc-issuer is already rejected above, so this is
+	// exactly "no trust material at all".)
+	hubLookupMode := !keyMode && !keylessMode
 	// Keyless with no explicit issuer defaults to GitHub Actions (ADR-0044).
 	// This runs AFTER mode resolution, and cosign still checks issuer == this
 	// value, so a wrong default can only cause a false rejection, never a
-	// false acceptance.
+	// false acceptance. Hub-lookup mode carries its own issuer from the record.
 	if keylessMode && issuer == "" {
 		issuer = defaultCertOIDCIssuer
 	}
@@ -230,13 +265,75 @@ func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, err
 		return verifyPolicy{}, errors.New("hub discovery returned no registry URL")
 	}
 
-	return verifyPolicy{
+	policy := verifyPolicy{
 		reference: fmt.Sprintf("%s/%s:%s", registryHost, repository, version),
 		keyPath:   keyPath,
 		identity:  identity,
 		issuer:    issuer,
 		plainHTTP: plainHTTP,
-	}, nil
+	}
+
+	if hubLookupMode {
+		if err := resolveHubIdentity(ctx, url, repository, &policy); err != nil {
+			return verifyPolicy{}, err
+		}
+	}
+	return policy, nil
+}
+
+// resolveHubIdentity fills the keyless trust material on policy from the hub's
+// recorded signer identity for the catalog coordinate (ADR-0045 decision 8).
+// The hub is trusted only as the *identity* source here — cosign still performs
+// the Sigstore verification against it — and runVerify prints what was used and
+// that it came from the hub before verifying, so the trust is never silent.
+func resolveHubIdentity(ctx context.Context, url, repository string, policy *verifyPolicy) error {
+	ns, id, ok := strings.Cut(repository, "/")
+	if !ok || ns == "" || id == "" || strings.Contains(id, "/") {
+		return fmt.Errorf("expected --repository as <namespace>/<catalog-id>, got %q", repository)
+	}
+
+	catalog, err := hub.New(url, "").GetCatalog(ctx, ns, id)
+	if err != nil {
+		return err
+	}
+	if catalog.SignerIdentity == "" {
+		return fmt.Errorf("hub has no recorded signer identity for %s/%s — the artifact predates hub-side signature verification, or this hub does not serve signer identity; pass --cosign-key or --certificate-identity to verify explicitly", ns, id)
+	}
+
+	issuer, workflowPath, err := parseKeylessIdentity(catalog.SignerIdentity)
+	if err != nil {
+		return err
+	}
+	policy.issuer = issuer
+	policy.hubIdentity = catalog.SignerIdentity
+	// The pin is ref-stripped, so admit any git ref by matching the exact
+	// workflow path followed by cosign's SAN '@<ref>' suffix. QuoteMeta and the
+	// '^...@' anchor are load-bearing: they must never widen beyond this one
+	// workflow path (e.g. a longer sibling path or an org-wide match).
+	policy.identityRegexp = "^" + regexp.QuoteMeta(workflowPath) + "@"
+	return nil
+}
+
+// parseKeylessIdentity splits a hub-recorded canonical signer identity —
+// "keyless:<oidc-issuer>#<workflow-path>", ref-stripped
+// (grc-store-protocol/identity) — into its issuer and workflow path. It rejects
+// unknown schemes (e.g. the defined-but-unwired "key:sha256:<fpr>") and
+// malformed values so a garbled record fails loudly rather than producing a
+// bogus cosign policy.
+func parseKeylessIdentity(canonical string) (issuer, workflowPath string, err error) {
+	rest, ok := strings.CutPrefix(canonical, identity.KeylessScheme)
+	if !ok {
+		scheme, _, hasScheme := strings.Cut(canonical, ":")
+		if hasScheme {
+			return "", "", fmt.Errorf("hub signer identity %q uses unsupported scheme %q — only keyless identities can be verified without explicit trust flags; pass --cosign-key or --certificate-identity", canonical, scheme)
+		}
+		return "", "", fmt.Errorf("hub signer identity %q is malformed (expected \"keyless:<issuer>#<workflow-path>\")", canonical)
+	}
+	issuer, workflowPath, ok = strings.Cut(rest, "#")
+	if !ok || issuer == "" || workflowPath == "" {
+		return "", "", fmt.Errorf("hub signer identity %q is malformed (expected \"keyless:<issuer>#<workflow-path>\")", canonical)
+	}
+	return issuer, workflowPath, nil
 }
 
 func runCosignVerify(ctx context.Context, args []string, out io.Writer) error {

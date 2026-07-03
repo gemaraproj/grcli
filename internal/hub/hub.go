@@ -153,6 +153,13 @@ type Catalog struct {
 	LatestVersion        string    `json:"latest_version"`
 	LatestManifestDigest string    `json:"latest_manifest_digest"`
 	Releases             []Release `json:"releases"`
+	// SignerIdentity is the canonical keyless signer the hub verified and
+	// TOFU-pinned for this coordinate at ingest — "keyless:<issuer>#<workflow-path>",
+	// ref-stripped (grc-store-protocol/identity, ADR-0045 decision 6). Absent when
+	// no signed version has been ingested (or the hub predates hub-side
+	// verification); grcli verify's zero-flag mode reads it to derive the cosign
+	// trust policy without the consumer having to know the workflow path.
+	SignerIdentity string `json:"signer_identity,omitempty"`
 }
 
 // GetCatalog fetches a catalog and its releases via

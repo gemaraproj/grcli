@@ -70,7 +70,7 @@ Run `grcli <command> --help` for the full flag list. The typical flow is
 | `login` | Sign in to a hub via OIDC device flow; stores tokens for `publish`. |
 | `validate` | Check YAML against the Gemara spec via `cue vet`. |
 | `publish` | Pack an artifact + provenance into a signed OCI bundle, push it, and notify the hub. |
-| `verify` | Verify a remote bundle's cosign signature. |
+| `verify` | Verify a remote bundle's cosign signature — with no trust flags, against the signer identity the hub recorded at ingest. |
 | `unpack` | Pull a bundle and write its files + manifest to disk. |
 | `cat` | Print an artifact's Gemara content to stdout (no files written) — for piping into `yq`. |
 | `logout` | Forget locally-stored credentials. |
@@ -85,7 +85,12 @@ grcli validate -f controls.yaml --spec /path/to/gemara
 # Publish — picks up the stored login token; signs by default
 grcli publish -f controls.yaml
 
-# Verify a published bundle (keyless; issuer defaults to GitHub Actions)
+# Verify a published bundle — zero-flag: uses the signer identity the hub
+# recorded at ingest (prints it, and that it came from the hub, before verifying)
+grcli verify --repository myorg/my-controls --version 1.0.0
+
+# Or assert the identity yourself for an independent check (bypasses the hub
+# lookup; issuer defaults to GitHub Actions)
 grcli verify --repository myorg/my-controls --version 1.0.0 \
   --certificate-identity https://github.com/myorg/my-controls/.github/workflows/publish.yml@refs/heads/main
 
@@ -205,9 +210,13 @@ jobs:
 
 cosign records the workflow URL as the signer identity
 (`https://github.com/<org>/<repo>/.github/workflows/publish.yml@<ref>`).
-Share that with the issuer
-`https://token.actions.githubusercontent.com` as the `grcli verify`
-policy.
+The hub verifies that signature at ingest and records the (ref-stripped)
+identity, so a consumer can run `grcli verify --repository … --version …`
+with **no trust flags** and grcli will verify against the recorded identity
+(printing it, and that it came from the hub, first — ADR-0045). For an
+independent check that does not trust the hub as the identity source, a
+consumer supplies `--certificate-identity` (the workflow URL above) with the
+issuer `https://token.actions.githubusercontent.com` themselves.
 
 ## License
 

@@ -4,8 +4,11 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -41,11 +44,6 @@ func TestVerify_FlagValidation(t *testing.T) {
 			name:    "missing-version",
 			args:    []string{"verify", "--url", "https://hub.example", "--repository", "rep", "--cosign-key", "k"},
 			wantSub: "--version is required",
-		},
-		{
-			name:    "no-trust-material",
-			args:    []string{"verify", "--url", "https://hub.example", "--repository", "rep", "--version", "t"},
-			wantSub: "either --cosign-key or --certificate-identity is required",
 		},
 		{
 			name: "both-key-and-keyless",
@@ -171,5 +169,150 @@ func TestVerifyPolicy_CosignArgs(t *testing.T) {
 			"--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
 			"reg.example/team/artifact:1.0.0",
 		}, p.cosignArgs())
+	})
+	t.Run("hub-lookup-mode uses --certificate-identity-regexp", func(t *testing.T) {
+		p := verifyPolicy{
+			reference:      "reg.example/team/artifact:1.0.0",
+			identityRegexp: `^https://github\.com/team/repo/\.github/workflows/publish\.yml@`,
+			issuer:         "https://token.actions.githubusercontent.com",
+		}
+		require.Equal(t, []string{
+			"verify", "--new-bundle-format",
+			"--certificate-identity-regexp", `^https://github\.com/team/repo/\.github/workflows/publish\.yml@`,
+			"--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
+			"reg.example/team/artifact:1.0.0",
+		}, p.cosignArgs())
+	})
+}
+
+// hubLookupServer serves both the discovery doc and a catalog detail so
+// resolveVerifyPolicy's zero-flag path (discovery → GetCatalog) can run against
+// httptest. signerIdentity is written into the catalog record; pass "" to omit
+// the field entirely (simulating an artifact that predates hub-side
+// verification). onCatalog, when non-nil, fires on each /v1/catalogs hit so a
+// test can assert the catalog lookup did (or did NOT) happen.
+func hubLookupServer(t *testing.T, signerIdentity string, onCatalog func()) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/.well-known/"):
+			_, _ = w.Write([]byte(`{"registry_url":"https://discovered.example/","hub_url":"https://hub.example","api_version":"v1"}`))
+		case strings.HasPrefix(r.URL.Path, "/v1/catalogs/"):
+			if onCatalog != nil {
+				onCatalog()
+			}
+			if signerIdentity == "" {
+				_, _ = w.Write([]byte(`{"namespace":"team","catalog_id":"artifact"}`))
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"namespace":"team","catalog_id":"artifact","signer_identity":%q}`, signerIdentity)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestResolveVerifyPolicy_HubLookup covers the zero-flag verify-by-coordinate
+// path (ADR-0045 decision 8): no trust flags, so the signer identity is read
+// from the hub's catalog record and turned into an anchored keyless cosign
+// policy.
+func TestResolveVerifyPolicy_HubLookup(t *testing.T) {
+	baseViper := func(url string) *viper.Viper {
+		v := viper.New()
+		v.Set(flagURL, url)
+		v.Set(flagRepository, "team/artifact")
+		v.Set(flagVersion, "1.0.0")
+		return v
+	}
+
+	t.Run("hub identity becomes an anchored, escaped identity regexp", func(t *testing.T) {
+		// A workflow path carrying regexp metacharacters ('.') — the escaping is
+		// load-bearing, so it must survive into the compiled matcher.
+		const issuer = "https://token.actions.githubusercontent.com"
+		const workflowPath = "https://github.com/acme/repo.name/.github/workflows/publish.yml"
+		canonical := "keyless:" + issuer + "#" + workflowPath
+
+		srv := hubLookupServer(t, canonical, nil)
+		policy, err := resolveVerifyPolicy(context.Background(), baseViper(srv.URL))
+		require.NoError(t, err)
+
+		require.Equal(t, issuer, policy.issuer)
+		require.Equal(t, canonical, policy.hubIdentity, "the raw hub record must be kept for the visible-trust announcement")
+		require.Empty(t, policy.identity, "hub-lookup mode uses the regexp field, never the exact-identity field")
+
+		wantRegexp := "^" + regexp.QuoteMeta(workflowPath) + "@"
+		require.Equal(t, wantRegexp, policy.identityRegexp)
+		require.True(t, strings.HasPrefix(policy.identityRegexp, "^"), "must anchor at start")
+		require.True(t, strings.HasSuffix(policy.identityRegexp, "@"), "must require the SAN's @<ref> boundary")
+
+		// The anchoring + escaping must admit any ref of THIS workflow while
+		// refusing a wider or prefixed identity.
+		re := regexp.MustCompile(policy.identityRegexp)
+		require.True(t, re.MatchString(workflowPath+"@refs/tags/v1.0.0"), "any tag ref of the pinned workflow verifies")
+		require.True(t, re.MatchString(workflowPath+"@refs/heads/main"), "any branch ref of the pinned workflow verifies")
+		require.False(t, re.MatchString("https://evil.example/"+workflowPath+"@refs/tags/v1"), "^ anchor rejects a prefixed identity")
+		require.False(t, re.MatchString(workflowPath+"-sibling/.github/workflows/publish.yml@refs/tags/v1"), "the @ boundary rejects a longer sibling path")
+		// The escaped '.' must not act as a wildcard: a look-alike host differing
+		// only where a literal '.' sits must not match.
+		require.False(t, re.MatchString("https://github.com/acme/repoXname/.github/workflows/publish.yml@refs/tags/v1"), "escaped '.' must be a literal, not a wildcard")
+
+		require.Contains(t, policy.cosignArgs(), "--certificate-identity-regexp")
+		require.Contains(t, policy.cosignArgs(), wantRegexp)
+		require.Equal(t, "keyless identity from hub record: "+canonical+", issuer "+issuer, policy.modeDescription())
+	})
+
+	t.Run("hub record without a signer identity is a clear, actionable error", func(t *testing.T) {
+		srv := hubLookupServer(t, "", nil)
+		_, err := resolveVerifyPolicy(context.Background(), baseViper(srv.URL))
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "no recorded signer identity")
+		require.Contains(t, err.Error(), "--cosign-key or --certificate-identity", "the error must point at the explicit-flag escape hatch")
+	})
+
+	t.Run("malformed hub identity fails loudly", func(t *testing.T) {
+		for _, bad := range []string{"not-a-valid-identity", "keyless:issuer-without-hash"} {
+			srv := hubLookupServer(t, bad, nil)
+			_, err := resolveVerifyPolicy(context.Background(), baseViper(srv.URL))
+			require.Error(t, err, "identity %q must be rejected", bad)
+			require.Contains(t, err.Error(), "malformed")
+		}
+	})
+
+	t.Run("unsupported key: scheme is rejected", func(t *testing.T) {
+		srv := hubLookupServer(t, "key:sha256:abc123", nil)
+		_, err := resolveVerifyPolicy(context.Background(), baseViper(srv.URL))
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "unsupported scheme")
+		require.Contains(t, err.Error(), `"key"`)
+	})
+
+	t.Run("explicit --certificate-identity bypasses the hub lookup entirely", func(t *testing.T) {
+		called := 0
+		srv := hubLookupServer(t, "key:should-never-be-read", func() { called++ })
+
+		v := baseViper(srv.URL)
+		v.Set(flagCertIdentity, "https://github.com/team/repo/.github/workflows/publish.yml@refs/heads/main")
+
+		policy, err := resolveVerifyPolicy(context.Background(), v)
+		require.NoError(t, err)
+		require.Equal(t, 0, called, "the catalog record must not be fetched when the identity is supplied explicitly")
+		require.Equal(t, "https://github.com/team/repo/.github/workflows/publish.yml@refs/heads/main", policy.identity)
+		require.Empty(t, policy.identityRegexp, "explicit keyless mode uses the exact identity, not a regexp")
+		require.Equal(t, defaultCertOIDCIssuer, policy.issuer, "explicit keyless still defaults the issuer (ADR-0044)")
+	})
+
+	t.Run("explicit --cosign-key bypasses the hub lookup entirely", func(t *testing.T) {
+		called := 0
+		srv := hubLookupServer(t, "key:should-never-be-read", func() { called++ })
+
+		v := baseViper(srv.URL)
+		v.Set(flagCosignKey, "/keys/cosign.pub")
+
+		policy, err := resolveVerifyPolicy(context.Background(), v)
+		require.NoError(t, err)
+		require.Equal(t, 0, called, "the catalog record must not be fetched when a key is supplied")
+		require.Equal(t, "/keys/cosign.pub", policy.keyPath)
 	})
 }

@@ -17,6 +17,19 @@ change bumps the minor version.
 
 ### Added
 
+- **`grcli verify` gains zero-flag verify-by-coordinate** (ADR-0045). Run
+  `grcli verify --repository <ns>/<id> --version <v>` with **no trust flags** and
+  grcli fetches the catalog record from the hub, reads the keyless signer
+  identity the hub verified and pinned at ingest, and verifies against it — so a
+  consumer needs no prior knowledge of the publishing workflow. The identity, and
+  that it came from the hub record, are printed before verification runs (trust
+  in the hub is visible, never silent). The ref-stripped pin is matched with
+  `cosign --certificate-identity-regexp '^<escaped workflow path>@'`, admitting
+  any git ref of that exact workflow but nothing wider. If the hub has no recorded
+  identity (an artifact predating hub-side verification), verify fails with a
+  clear pointer to the explicit flags. Passing `--cosign-key` or
+  `--certificate-identity` bypasses the hub lookup entirely — the independent,
+  high-assurance path — unchanged (including ADR-0044's issuer default).
 - **`grcli verify` defaults `--certificate-oidc-issuer` to
   `https://token.actions.githubusercontent.com`** (ADR-0044). Keyless
   verification of a GitHub-Actions-signed bundle then needs only
