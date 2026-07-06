@@ -41,10 +41,14 @@ cosign verify ghcr.io/revanite-io/grcli:latest \
 
 Some commands shell out to external tools:
 
-- **`cosign` ≥ 3.x** on `PATH` — `publish` (signing) and key-based
-  `verify --cosign-key` only. **Keyless `verify` needs no external tools**: it
-  verifies in-process against Sigstore (ADR-0046), so consumers can verify with
-  just the `grcli` binary. https://docs.sigstore.dev/cosign/installation/
+- **`cosign` ≥ 2.4.0** on `PATH` — `publish` (signing) and key-based
+  `verify --cosign-key` only. grcli detects the cosign version and adapts to the
+  Sigstore bundle format across the whole range (passing `--new-bundle-format`
+  on 2.4–2.x, relying on the default on 3.x), so any cosign ≥ 2.4.0 works and
+  cosign 3.x is fully supported. A cosign below 2.4.0 fails fast with a clear
+  message rather than a raw `unknown flag`. **Keyless `verify` needs no external
+  tools**: it verifies in-process against Sigstore (ADR-0046), so consumers can
+  verify with just the `grcli` binary. https://docs.sigstore.dev/cosign/installation/
 - **`cue`** on `PATH` — `validate`. https://cuelang.org
 - **A Gemara spec checkout** — `validate`.
   `git clone https://github.com/gemaraproj/gemara`
@@ -168,7 +172,7 @@ Keys (env form in parentheses):
 Signing is required by default: if `cosign` isn't available, `publish`
 fails *before* pushing, so nothing unsigned reaches the registry. Pass
 `--no-sign` to deliberately opt out. (Signing still shells out to
-`cosign` ≥ 3.x — the prerequisite lives with publishers, not consumers.)
+`cosign` ≥ 2.4.0 — the prerequisite lives with publishers, not consumers.)
 
 Keyless `verify` runs **in-process** against Sigstore (ADR-0046): no `cosign`,
 no version-skew caveats, just the `grcli` binary. It embeds the pinned Sigstore
@@ -178,7 +182,7 @@ private-Sigstore deployment, point `GRCLI_TRUSTED_ROOT` (env, or the
 use the **Sigstore bundle format** (v0.3, attached as an OCI 1.1 referrer);
 artifacts signed by an older grcli (the legacy `.sig` tag format) must be
 re-published to re-sign. Only key-based `verify --cosign-key` still shells out
-to `cosign` ≥ 3.x — a niche publisher-shared-key path.
+to `cosign` ≥ 2.4.0 — a niche publisher-shared-key path.
 
 ## Publishing from GitHub Actions
 
@@ -213,6 +217,8 @@ jobs:
           oras pull ghcr.io/revanite-io/grcli:latest --platform linux/amd64
           sudo install grcli /usr/local/bin/grcli
       - uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v3.0.6'   # any cosign >= 2.4.0; pin for reproducible CI
       - run: grcli publish -f controls.yaml
         # no `env:` block, no `with: token:`, no secrets — id-token: write
         # above is what makes this work

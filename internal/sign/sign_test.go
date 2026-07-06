@@ -10,13 +10,25 @@ import (
 	"testing"
 )
 
-// cosignOnPath puts a dummy executable named "cosign" on PATH so the
-// LookPath check passes. Preflight never runs it, so the contents don't
-// matter — only that it's an executable file LookPath can find.
+// fakeCosignScript builds a /bin/sh body for a fake cosign that answers
+// `cosign version[ --json]` with the given semver (Preflight probes the version
+// via BundleFormatArgs), and — when argsFile != "" — appends every arg of any
+// OTHER invocation to argsFile so a test can assert the exact sign/verify flags.
+func fakeCosignScript(version, argsFile string) string {
+	s := "#!/bin/sh\n" +
+		"if [ \"$1\" = version ]; then printf '{\"gitVersion\":\"" + version + "\"}\\n'; exit 0; fi\n"
+	if argsFile != "" {
+		s += "for a in \"$@\"; do printf '%s\\n' \"$a\" >> " + argsFile + "; done\n"
+	}
+	return s + "exit 0\n"
+}
+
+// cosignOnPath puts a dummy cosign on PATH so the LookPath check passes and the
+// version probe reports an in-band version. It doesn't record args.
 func cosignOnPath(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "cosign"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "cosign"), []byte(fakeCosignScript("v2.6.3", "")), 0o755); err != nil {
 		t.Fatalf("write fake cosign: %v", err)
 	}
 	t.Setenv("PATH", dir)
@@ -33,7 +45,7 @@ func TestPreflight(t *testing.T) {
 		cosignAbsent(t)
 		t.Setenv("GITHUB_ACTIONS", "")
 		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
-		if err := Preflight(Options{Disabled: true}); err != nil {
+		if err := Preflight(context.Background(), Options{Disabled: true}); err != nil {
 			t.Fatalf("--no-sign must pass preflight, got %v", err)
 		}
 	})
@@ -42,7 +54,7 @@ func TestPreflight(t *testing.T) {
 		cosignAbsent(t)
 		t.Setenv("GITHUB_ACTIONS", "true")
 		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "tok") // material present, but no cosign
-		err := Preflight(Options{})
+		err := Preflight(context.Background(), Options{})
 		if err == nil || !strings.Contains(err.Error(), "cosign") {
 			t.Fatalf("want a cosign-not-found error, got %v", err)
 		}
@@ -52,7 +64,7 @@ func TestPreflight(t *testing.T) {
 		cosignOnPath(t)
 		t.Setenv("GITHUB_ACTIONS", "true")
 		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "tok")
-		if err := Preflight(Options{}); err != nil {
+		if err := Preflight(context.Background(), Options{}); err != nil {
 			t.Fatalf("CI keyless should pass, got %v", err)
 		}
 	})
@@ -61,7 +73,7 @@ func TestPreflight(t *testing.T) {
 		cosignOnPath(t)
 		t.Setenv("GITHUB_ACTIONS", "true")
 		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
-		err := Preflight(Options{})
+		err := Preflight(context.Background(), Options{})
 		if err == nil || !strings.Contains(err.Error(), "id-token") {
 			t.Fatalf("want an id-token error, got %v", err)
 		}
@@ -71,7 +83,7 @@ func TestPreflight(t *testing.T) {
 		cosignOnPath(t)
 		t.Setenv("GITHUB_ACTIONS", "")
 		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
-		if err := Preflight(Options{KeyPath: "/keys/x.key"}); err != nil {
+		if err := Preflight(context.Background(), Options{KeyPath: "/keys/x.key"}); err != nil {
 			t.Fatalf("local key should pass, got %v", err)
 		}
 	})
@@ -80,65 +92,100 @@ func TestPreflight(t *testing.T) {
 		cosignOnPath(t)
 		t.Setenv("GITHUB_ACTIONS", "")
 		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
-		err := Preflight(Options{})
+		err := Preflight(context.Background(), Options{})
 		if err == nil || !strings.Contains(err.Error(), "signing material") {
 			t.Fatalf("want a no-signing-material error, got %v", err)
 		}
 	})
 }
 
-// recordingCosign installs a fake cosign that appends its args (one per line)
-// to a file, and returns that file's path. Lets a test assert the exact flags
-// grcli passes without a real registry.
-func recordingCosign(t *testing.T) string {
+// recordingCosign installs a fake cosign that reports the given version and
+// appends the args of any non-version invocation (one per line) to a file,
+// returning that file's path. Lets a test assert the exact flags grcli passes
+// for a chosen cosign version, without a real registry.
+func recordingCosign(t *testing.T, version string) string {
 	t.Helper()
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "args")
-	script := "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> " + argsFile + "; done\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(dir, "cosign"), []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "cosign"), []byte(fakeCosignScript(version, argsFile)), 0o755); err != nil {
 		t.Fatalf("write recording cosign: %v", err)
 	}
 	t.Setenv("PATH", dir)
 	return argsFile
 }
 
-// TestSignPassesNewBundleFormat pins that grcli signs with the Sigstore
-// bundle-as-referrer format (ADR-0035) in BOTH the keyless and key paths — the
-// format the hub's plugin verifier expects and pvtr already produces.
-func TestSignPassesNewBundleFormat(t *testing.T) {
-	t.Run("keyless", func(t *testing.T) {
-		argsFile := recordingCosign(t)
-		t.Setenv("GITHUB_ACTIONS", "true")
-		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "tok")
-		if _, err := Sign(context.Background(), Options{Reference: "reg/repo:1"}); err != nil {
-			t.Fatalf("sign: %v", err)
-		}
-		got, err := os.ReadFile(argsFile)
-		if err != nil {
-			t.Fatalf("read args: %v", err)
-		}
-		if !strings.Contains(string(got), "--new-bundle-format") {
-			t.Errorf("keyless sign args missing --new-bundle-format; got:\n%s", got)
+// TestSignBundleFormatByCosignVersion pins that grcli selects the Sigstore
+// bundle-as-referrer format (ADR-0035) correctly across the cosign range,
+// instead of hard-coding --new-bundle-format for the narrow band that flag
+// exists in: it passes the flag on cosign 2.4–2.x (where it's first-class) and
+// omits it on cosign ≥ 3.0.0 (where the bundle format is the default and the
+// flag is deprecated). Both keyless and key paths are covered.
+func TestSignBundleFormatByCosignVersion(t *testing.T) {
+	cases := []struct {
+		name     string
+		version  string
+		wantFlag bool
+	}{
+		{"2.6.x band passes the flag", "v2.6.3", true},
+		{"3.x omits the deprecated flag", "v3.0.6", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Run("keyless", func(t *testing.T) {
+				argsFile := recordingCosign(t, tc.version)
+				t.Setenv("GITHUB_ACTIONS", "true")
+				t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "tok")
+				if _, err := Sign(context.Background(), Options{Reference: "reg/repo:1"}); err != nil {
+					t.Fatalf("sign: %v", err)
+				}
+				assertBundleFlag(t, argsFile, tc.wantFlag)
+			})
+
+			t.Run("key", func(t *testing.T) {
+				argsFile := recordingCosign(t, tc.version)
+				t.Setenv("GITHUB_ACTIONS", "")
+				t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
+				keyPath := filepath.Join(t.TempDir(), "cosign.key")
+				if err := os.WriteFile(keyPath, []byte("x"), 0o600); err != nil {
+					t.Fatalf("write key: %v", err)
+				}
+				if _, err := Sign(context.Background(), Options{Reference: "reg/repo:1", KeyPath: keyPath}); err != nil {
+					t.Fatalf("sign: %v", err)
+				}
+				assertBundleFlag(t, argsFile, tc.wantFlag)
+			})
+		})
+	}
+}
+
+func assertBundleFlag(t *testing.T, argsFile string, want bool) {
+	t.Helper()
+	got, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read args: %v", err)
+	}
+	if has := strings.Contains(string(got), "--new-bundle-format"); has != want {
+		t.Errorf("--new-bundle-format present=%v, want %v; sign args:\n%s", has, want, got)
+	}
+}
+
+// TestBundleFormatArgsRejectsOutOfRangeCosign pins the fail-fast behavior: a
+// cosign too old for the flag, or one whose version can't be parsed, is a clear
+// grcli error rather than cosign's raw `unknown flag` surfacing after a push.
+func TestBundleFormatArgsRejectsOutOfRangeCosign(t *testing.T) {
+	t.Run("too old names the required version", func(t *testing.T) {
+		recordingCosign(t, "v2.2.0")
+		_, err := BundleFormatArgs(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "2.4.0") {
+			t.Fatalf("want a too-old error naming cosign 2.4.0, got %v", err)
 		}
 	})
 
-	t.Run("key", func(t *testing.T) {
-		argsFile := recordingCosign(t)
-		t.Setenv("GITHUB_ACTIONS", "")
-		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
-		keyPath := filepath.Join(t.TempDir(), "cosign.key")
-		if err := os.WriteFile(keyPath, []byte("x"), 0o600); err != nil {
-			t.Fatalf("write key: %v", err)
-		}
-		if _, err := Sign(context.Background(), Options{Reference: "reg/repo:1", KeyPath: keyPath}); err != nil {
-			t.Fatalf("sign: %v", err)
-		}
-		got, err := os.ReadFile(argsFile)
-		if err != nil {
-			t.Fatalf("read args: %v", err)
-		}
-		if !strings.Contains(string(got), "--new-bundle-format") {
-			t.Errorf("key sign args missing --new-bundle-format; got:\n%s", got)
+	t.Run("unparseable version fails closed", func(t *testing.T) {
+		recordingCosign(t, "devel")
+		_, err := BundleFormatArgs(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "determine the cosign version") {
+			t.Fatalf("want an undeterminable-version error, got %v", err)
 		}
 	})
 }

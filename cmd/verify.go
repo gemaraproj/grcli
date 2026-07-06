@@ -157,7 +157,11 @@ func runVerify(cmd *cobra.Command, v *viper.Viper) error {
 			return errors.New("cosign binary not found on PATH — required only for --cosign-key (key-based) verification; " +
 				"install from https://docs.sigstore.dev/cosign/installation/ (keyless verification needs no external tools)")
 		}
-		return runCosignVerify(ctx, policy.cosignArgs(), out)
+		args, err := policy.cosignArgs(ctx)
+		if err != nil {
+			return err
+		}
+		return runCosignVerify(ctx, args, out)
 	}
 
 	// Keyless verification (explicit --certificate-identity and zero-flag
@@ -249,10 +253,15 @@ func (p verifyPolicy) modeDescription() string {
 // --cosign-key (key-based) verification (ADR-0046 decision 5). The keyless
 // paths verify in-process and never reach here. grcli signs with the Sigstore
 // bundle format (bundle-as-OCI-referrer), so cosign must expect it too — the
-// flag string is the SAME exported constant the sign side uses, so they can't
-// silently drift (sign.FlagNewBundleFormat, ADR-0035).
-func (p verifyPolicy) cosignArgs() []string {
-	args := []string{"verify", sign.FlagNewBundleFormat}
+// bundle-format flags come from the SAME version-gated helper the sign side
+// uses (sign.BundleFormatArgs), so sign and verify can't silently drift on
+// either the format OR the cosign version band (ADR-0035).
+func (p verifyPolicy) cosignArgs(ctx context.Context) ([]string, error) {
+	bundleArgs, err := sign.BundleFormatArgs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	args := append([]string{"verify"}, bundleArgs...)
 	// cosign verify pulls the signature from the registry, which now
 	// requires a bearer token (ADR-0031). Unlike the in-process oras path, the
 	// cosign subprocess can't read GRCLI_REGISTRY_TOKEN, so pass it
@@ -264,7 +273,7 @@ func (p verifyPolicy) cosignArgs() []string {
 		args = append(args, "--allow-http-registry")
 	}
 	args = append(args, "--key", p.keyPath)
-	return append(args, p.reference)
+	return append(args, p.reference), nil
 }
 
 // identityPolicy translates the resolved keyless trust material into the

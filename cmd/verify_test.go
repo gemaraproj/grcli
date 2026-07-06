@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -16,6 +18,21 @@ import (
 
 	"github.com/revanite-io/grcli/internal/sigverify"
 )
+
+// fakeCosignVersion puts a cosign on PATH that answers `cosign version[ --json]`
+// with the given semver (and no-ops any other invocation). It lets the
+// version-gated argv builder be tested deterministically, independent of
+// whatever cosign the host happens to have.
+func fakeCosignVersion(t *testing.T, version string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = version ]; then printf '{\"gitVersion\":\"" + version + "\"}\\n'; exit 0; fi\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "cosign"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake cosign: %v", err)
+	}
+	t.Setenv("PATH", dir)
+}
 
 // Happy-path verify tests would need a real signed registry image and a
 // usable cosign trust root — too much external state for a unit test
@@ -152,16 +169,40 @@ func TestResolveVerifyPolicy_URL(t *testing.T) {
 // only ever runs with --key. The keyless trust material is carried by
 // identityPolicy() instead (TestVerifyPolicy_IdentityPolicy below).
 func TestVerifyPolicy_CosignArgs(t *testing.T) {
-	t.Run("key-mode", func(t *testing.T) {
-		p := verifyPolicy{
-			reference: "reg.example/team/artifact:1.0.0",
-			keyPath:   "/keys/cosign.pub",
-		}
+	p := verifyPolicy{
+		reference: "reg.example/team/artifact:1.0.0",
+		keyPath:   "/keys/cosign.pub",
+	}
+
+	t.Run("2.6.x band passes --new-bundle-format", func(t *testing.T) {
+		fakeCosignVersion(t, "v2.6.3")
+		args, err := p.cosignArgs(context.Background())
+		require.NoError(t, err)
 		require.Equal(t, []string{
 			"verify", "--new-bundle-format",
 			"--key", "/keys/cosign.pub",
 			"reg.example/team/artifact:1.0.0",
-		}, p.cosignArgs())
+		}, args)
+	})
+
+	// cosign ≥ 3.0.0 makes the bundle format the default and deprecates the
+	// flag; verify must omit it there to match what sign now produces.
+	t.Run("3.x omits the deprecated flag", func(t *testing.T) {
+		fakeCosignVersion(t, "v3.0.6")
+		args, err := p.cosignArgs(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, []string{
+			"verify",
+			"--key", "/keys/cosign.pub",
+			"reg.example/team/artifact:1.0.0",
+		}, args)
+	})
+
+	t.Run("cosign too old fails fast", func(t *testing.T) {
+		fakeCosignVersion(t, "v2.2.0")
+		_, err := p.cosignArgs(context.Background())
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "2.4.0")
 	})
 }
 

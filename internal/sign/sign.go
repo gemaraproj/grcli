@@ -9,10 +9,14 @@ package sign
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
+
+	"golang.org/x/mod/semver"
 )
 
 // Mode reports how sign() resolved its trust material.
@@ -36,7 +40,104 @@ const (
 // and does NOT verify against the legacy `.sig` path (and vice versa), so sign
 // and verify MUST stay a matched pair. Sharing one constant makes that structural,
 // not coincidental.
+//
+// The flag is NOT passed unconditionally — it only exists on a bounded band of
+// cosign versions. Callers select it via BundleFormatArgs, which gates on the
+// detected cosign version. See that function for the rationale.
 const FlagNewBundleFormat = "--new-bundle-format"
+
+// minBundleFormatCosign is the oldest cosign that understands
+// --new-bundle-format: the flag was introduced in cosign 2.4.0. Below this,
+// cosign aborts with `unknown flag: --new-bundle-format`.
+const minBundleFormatCosign = "v2.4.0"
+
+// bundleDefaultCosign is the cosign version at which the Sigstore bundle format
+// became the DEFAULT and --new-bundle-format was deprecated (cosign 3.0.0). At
+// or above this the flag is redundant, prints a deprecation warning on every
+// invocation, and is slated for removal — so we omit it and rely on the default.
+const bundleDefaultCosign = "v3.0.0"
+
+// BundleFormatArgs returns the cosign CLI flags that select grc.store's Sigstore
+// bundle signature format for the cosign currently on PATH, gating on its
+// version so grcli works across the whole supported cosign range instead of the
+// narrow 2.4.0–2.6.x band the flag was hard-coded for:
+//
+//	cosign < 2.4.0          → error   (flag doesn't exist; fail fast with a clear
+//	                                    message instead of cosign's raw `unknown flag`)
+//	2.4.0 ≤ cosign < 3.0.0  → ["--new-bundle-format"]  (flag is first-class here)
+//	cosign ≥ 3.0.0          → nil     (bundle format is the default; passing the
+//	                                    deprecated flag only warns and will break
+//	                                    when cosign removes it)
+//	version undeterminable   → error   (fail closed — guessing wrong silently
+//	                                    produces a format the verify side rejects)
+//
+// Both the sign path and the key-based verify shell-out call this, so a
+// bundle-signed artifact is always verified as a bundle: the two stay a matched
+// pair by construction, not convention.
+func BundleFormatArgs(ctx context.Context) ([]string, error) {
+	v, err := detectCosignVersion(ctx)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case semver.Compare(v, minBundleFormatCosign) < 0:
+		return nil, fmt.Errorf("cosign %s is too old for grc.store's Sigstore bundle "+
+			"signature format, which needs cosign ≥ 2.4.0 — pin a newer cosign "+
+			"(e.g. sigstore/cosign-installer with a version ≥ v2.4.0), or pass "+
+			"--no-sign to publish without provenance", v)
+	case semver.Compare(v, bundleDefaultCosign) < 0:
+		return []string{FlagNewBundleFormat}, nil
+	default:
+		return nil, nil
+	}
+}
+
+// detectCosignVersion returns the canonical, v-prefixed semver reported by the
+// cosign on PATH. It prefers `cosign version --json` (stable since cosign 2.x)
+// and falls back to scraping the `GitVersion:` line of the human-readable
+// output. It fails CLOSED: an unparseable version — a source `devel` build, a
+// pseudo-version, a truncated string — is an error, because selecting the wrong
+// signature format silently produces a signature the verify side won't accept.
+func detectCosignVersion(ctx context.Context) (string, error) {
+	raw, err := cosignVersionString(ctx)
+	if err != nil {
+		return "", err
+	}
+	v := raw
+	if !strings.HasPrefix(v, "v") {
+		v = "v" + v
+	}
+	if !semver.IsValid(v) {
+		return "", fmt.Errorf("could not determine the cosign version (got %q) — "+
+			"install a released cosign ≥ 2.4.0 so grcli can select the correct "+
+			"signature format, or pass --no-sign", raw)
+	}
+	return semver.Canonical(v), nil
+}
+
+// cosignVersionString returns cosign's self-reported version string (e.g.
+// "v3.0.6"), preferring the machine-readable `--json` form and falling back to
+// the GitVersion: line of plain `cosign version`.
+func cosignVersionString(ctx context.Context) (string, error) {
+	if out, err := exec.CommandContext(ctx, "cosign", "version", "--json").Output(); err == nil {
+		var payload struct {
+			GitVersion string `json:"gitVersion"`
+		}
+		if json.Unmarshal(out, &payload) == nil && payload.GitVersion != "" {
+			return strings.TrimSpace(payload.GitVersion), nil
+		}
+	}
+	out, err := exec.CommandContext(ctx, "cosign", "version").Output()
+	if err != nil {
+		return "", fmt.Errorf("running `cosign version`: %w", err)
+	}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "GitVersion:"); ok {
+			return strings.TrimSpace(rest), nil
+		}
+	}
+	return "", errors.New("could not parse `cosign version` output for a GitVersion")
+}
 
 // Result is what Sign returns to the caller for logging.
 type Result struct {
@@ -70,10 +171,16 @@ type Options struct {
 //
 //	--no-sign            → ok (publishing unsigned is an explicit choice)
 //	cosign not on PATH   → error
+//	cosign out of range  → error (too old for the bundle format; see BundleFormatArgs)
 //	GITHUB_ACTIONS=true   → ok if id-token is available, else error
 //	KeyPath != ""        → ok
 //	otherwise            → error (no signing material)
-func Preflight(opts Options) error {
+//
+// The one thing it DOES run is `cosign version` (via BundleFormatArgs) — a
+// cheap, side-effect-free probe — so an out-of-band cosign fails here, before
+// any bytes are pushed, rather than after Sign shells out and cosign rejects the
+// signature flag.
+func Preflight(ctx context.Context, opts Options) error {
 	if opts.Disabled {
 		return nil
 	}
@@ -81,6 +188,9 @@ func Preflight(opts Options) error {
 		return errors.New("cosign not found on PATH — install it " +
 			"(e.g. the sigstore/cosign-installer step in CI) so the publish can be signed, " +
 			"or pass --no-sign to publish without provenance")
+	}
+	if _, err := BundleFormatArgs(ctx); err != nil {
+		return err
 	}
 	switch {
 	case os.Getenv("GITHUB_ACTIONS") == "true":
@@ -124,21 +234,32 @@ func Sign(ctx context.Context, opts Options) (*Result, error) {
 	if opts.Reference == "" {
 		return nil, errors.New("sign: empty reference")
 	}
-	if err := Preflight(opts); err != nil {
+	if err := Preflight(ctx, opts); err != nil {
+		return nil, fmt.Errorf("sign: %w", err)
+	}
+
+	// Select the signature-format flag for the detected cosign (empty on
+	// cosign ≥ 3.0.0, where the bundle format is already the default).
+	// Preflight already validated the version, so this cannot error here.
+	bundleArgs, err := BundleFormatArgs(ctx)
+	if err != nil {
 		return nil, fmt.Errorf("sign: %w", err)
 	}
 
 	// Preflight guarantees cosign is present and (GHA-with-id-token OR a
 	// key) is available. Prefer keyless in CI, mirroring the old order.
 	if os.Getenv("GITHUB_ACTIONS") == "true" {
-		args := append([]string{"sign", "--yes", FlagNewBundleFormat}, registryFlags(opts)...)
+		args := append([]string{"sign", "--yes"}, bundleArgs...)
+		args = append(args, registryFlags(opts)...)
 		args = append(args, opts.Reference)
 		if err := runCosign(ctx, args...); err != nil {
 			return nil, fmt.Errorf("cosign keyless sign: %w", err)
 		}
 		return &Result{Mode: ModeKeyless}, nil
 	}
-	args := append([]string{"sign", "--yes", FlagNewBundleFormat, "--key", opts.KeyPath}, registryFlags(opts)...)
+	args := append([]string{"sign", "--yes"}, bundleArgs...)
+	args = append(args, "--key", opts.KeyPath)
+	args = append(args, registryFlags(opts)...)
 	args = append(args, opts.Reference)
 	if err := runCosign(ctx, args...); err != nil {
 		return nil, fmt.Errorf("cosign key sign: %w", err)

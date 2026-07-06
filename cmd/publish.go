@@ -148,7 +148,7 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 		// in the registry. This is a local, instant check (cosign on PATH +
 		// key/CI material); --no-sign is the explicit opt-out for an
 		// unsigned, unverifiable publish.
-		if err := sign.Preflight(sign.Options{
+		if err := sign.Preflight(ctx, sign.Options{
 			Disabled: v.GetBool(flagNoSign),
 			KeyPath:  v.GetString(flagCosignKey),
 		}); err != nil {

@@ -3,6 +3,25 @@
 Notable changes to `grcli`. This project is pre-1.0; while on `v0.x`, a breaking
 change bumps the minor version.
 
+## [Unreleased]
+
+### Fixed
+
+- **`publish` signing no longer hard-codes `--new-bundle-format`, so it works
+  across the whole supported cosign range instead of a narrow band.** grcli now
+  detects the cosign version (`cosign version --json`) and selects the Sigstore
+  bundle-format flag accordingly: it passes `--new-bundle-format` on cosign
+  2.4.0–2.x (where the flag is first-class), and omits it on cosign ≥ 3.0.0
+  (where the bundle format is already the default and the flag is deprecated).
+  This removes the deprecation warning on every sign under cosign 3.x and makes
+  grcli forward-compatible with cosign removing the flag. A cosign **below
+  2.4.0** now fails fast, before any bytes are pushed, with a clear "needs cosign
+  ≥ 2.4.0 — pin a newer cosign" message instead of surfacing cosign's raw
+  `unknown flag: --new-bundle-format`. The stated cosign prerequisite drops from
+  ≥ 3.x to **≥ 2.4.0**. The same version-gated helper backs the key-based
+  `verify --cosign-key` shell-out, so sign and verify stay a matched pair.
+  (Reported against v0.4.0 by the FINOS Common Cloud Controls release pipeline.)
+
 ## [0.4.0] - 2026-07-03
 
 ### Changed

@@ -45,8 +45,14 @@ jobs:
 
       # Required for keyless signing; the publish step signs the bundle
       # with the same workflow OIDC identity that authorizes the push.
+      # Pin the cosign version: grcli needs cosign >= 2.4.0 for the Sigstore
+      # bundle format, and the installer's unpinned default has shipped older
+      # cosign in the past. grcli adapts to whatever cosign is here (2.4-2.x or
+      # 3.x); pinning just keeps CI reproducible and above the 2.4.0 floor.
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v3.0.6'
 
       - name: Publish
         run: grcli publish -f controls.yaml --url https://hub.grc.store
