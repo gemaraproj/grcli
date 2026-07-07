@@ -178,13 +178,19 @@ const maxSignatureBlobBytes = limits.MaxPluginBlobBytes
 // failure so the caller can fail closed (we cannot claim "unsigned" if we could
 // not look).
 //
-// Discovery filters referrers on mediatype.CosignSignReferrer, NOT
-// mediatype.SigstoreBundle: grcli signs catalogs with
-// `cosign sign --new-bundle-format`, which stamps the referrer's artifactType as
-// the cosign-sign value even though the bundle BLOB inside is a v0.3 bundle. This
-// is the documented catalog/plugin discovery divergence (grc-store-protocol/
-// mediatype "RULE — do not cross these"); filtering on SigstoreBundle here would
-// find zero referrers and treat every signed catalog as unsigned.
+// Discovery accepts BOTH referrer artifactTypes a cosign-signed catalog can
+// carry, because the stamped type is a function of the SIGNER's cosign major
+// version (field-confirmed against a live zot 2026-07-07):
+//
+//	cosign 2.6.x `sign --new-bundle-format` → mediatype.CosignSignReferrer
+//	cosign 3.x   `sign` (bundle by default) → mediatype.SigstoreBundle
+//
+// The bundle BLOB inside is the identical v0.3 bundle either way. Publishers
+// control their own cosign version, so filtering on a single type silently
+// treats the other cohort's signed catalogs as unsigned (the earlier
+// CosignSignReferrer-only filter did exactly that for cosign-3.x publishes).
+// This supersedes grc-store-protocol/mediatype's "RULE — do not cross these",
+// whose premise predates cosign 3.x.
 //
 // Auth flows through the same credential chain as UnpackRemote (the
 // GRCLI_REGISTRY_TOKEN the caller minted via ensureRegistryToken is read by
@@ -210,11 +216,13 @@ func FetchSignatureBundle(ctx context.Context, registryHost, repository, tag str
 
 // discoverSignatureBundle is the target-agnostic half of FetchSignatureBundle
 // (split out so it is unit-testable against an in-memory oras store, mirroring
-// the hub's ociref.SignatureBundle). It lists referrers of subject filtered on
-// mediatype.CosignSignReferrer — the catalog signature's artifactType — and
-// returns the raw bytes of the SigstoreBundle layer inside the first match, or
-// nil when no referrer is present (unsigned). An error is reserved for a genuine
-// transport/parse failure or a malformed referrer, so the caller fails closed.
+// the hub's ociref.SignatureBundle). It lists ALL referrers of subject and
+// keeps those whose artifactType is either signature type (cosign 2.6.x stamps
+// CosignSignReferrer, cosign 3.x stamps SigstoreBundle — see
+// FetchSignatureBundle), returning the raw bytes of the SigstoreBundle layer
+// inside the first match, or nil when none is present (unsigned). An error is
+// reserved for a genuine transport/parse failure or a malformed referrer, so
+// the caller fails closed.
 func discoverSignatureBundle(ctx context.Context, target oras.ReadOnlyTarget, subject ocispec.Descriptor) ([]byte, error) {
 	gs, ok := target.(content.ReadOnlyGraphStorage)
 	if !ok {
@@ -222,12 +230,20 @@ func discoverSignatureBundle(ctx context.Context, target oras.ReadOnlyTarget, su
 		// discovered → treat as unsigned (the verifier maps nil to ErrUnsigned).
 		return nil, nil
 	}
-	refs, err := registry.Referrers(ctx, gs, subject, mediatype.CosignSignReferrer)
+	// Empty artifactType = no server-side filter; referrer lists are tiny and
+	// filtering client-side is what lets one pass accept both stamp variants.
+	all, err := registry.Referrers(ctx, gs, subject, "")
 	if err != nil {
 		return nil, fmt.Errorf("listing signature referrers: %w", err)
 	}
+	var refs []ocispec.Descriptor
+	for _, r := range all {
+		if r.ArtifactType == mediatype.CosignSignReferrer || r.ArtifactType == mediatype.SigstoreBundle {
+			refs = append(refs, r)
+		}
+	}
 	if len(refs) == 0 {
-		return nil, nil // unsigned — no referrer attached
+		return nil, nil // unsigned — no signature referrer attached
 	}
 	// Use the first matching referrer: fetch its manifest, then return the layer
 	// blob whose media type is the Sigstore bundle JSON.

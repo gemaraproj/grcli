@@ -202,7 +202,7 @@ func TestVerifyPolicy_CosignArgs(t *testing.T) {
 		fakeCosignVersion(t, "v2.2.0")
 		_, err := p.cosignArgs(context.Background())
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "2.4.0")
+		require.Contains(t, err.Error(), "2.6.0")
 	})
 }
 

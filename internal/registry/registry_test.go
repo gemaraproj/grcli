@@ -91,20 +91,35 @@ func TestDiscoverSignatureBundle_UnsignedReturnsNil(t *testing.T) {
 	require.Nil(t, got, "no signature referrer → nil bundle (the verifier maps nil to ErrUnsigned)")
 }
 
-// TestDiscoverSignatureBundle_IgnoresPluginArtifactType is the "do not cross
-// these" guard (grc-store-protocol/mediatype): a referrer stamped with the
-// PLUGIN artifactType (SigstoreBundle) must NOT be discovered on the catalog
-// path, which filters on CosignSignReferrer. Finding it here would mean the
-// wrong filter, and mis-filtering treats signed artifacts as unsigned.
-func TestDiscoverSignatureBundle_IgnoresPluginArtifactType(t *testing.T) {
+// TestDiscoverSignatureBundle_FindsSigstoreBundleArtifactType pins the cosign
+// 3.x stamp variant: cosign 3.x signs with the bundle format by default and
+// attaches the referrer with artifactType SigstoreBundle (not the 2.6.x-era
+// CosignSignReferrer). Discovery must accept both — this exact miss (filtering
+// on CosignSignReferrer only) made the first live cosign-3.x-signed catalog
+// verify as "no signature attached" (2026-07-07). Supersedes the old
+// "do not cross these" guard, whose premise predates cosign 3.x.
+func TestDiscoverSignatureBundle_FindsSigstoreBundleArtifactType(t *testing.T) {
 	store := memory.New()
 	subject := subjectManifest(t, store)
-	// Attach with the PLUGIN artifactType instead of the catalog one.
-	attachSignature(t, store, subject, mediatype.SigstoreBundle, mediatype.SigstoreBundle, []byte(`{"bundle":"x"}`))
+	want := []byte(`{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json","the":"bundle"}`)
+	attachSignature(t, store, subject, mediatype.SigstoreBundle, mediatype.SigstoreBundle, want)
 
 	got, err := discoverSignatureBundle(context.Background(), store, subject)
 	require.NoError(t, err)
-	require.Nil(t, got, "a SigstoreBundle-artifactType (plugin-path) referrer must not match the catalog CosignSignReferrer filter")
+	require.Equal(t, want, got)
+}
+
+// TestDiscoverSignatureBundle_IgnoresUnrelatedArtifactType: a referrer that is
+// neither signature stamp variant (e.g. an SBOM attachment) must not be
+// mistaken for a signature.
+func TestDiscoverSignatureBundle_IgnoresUnrelatedArtifactType(t *testing.T) {
+	store := memory.New()
+	subject := subjectManifest(t, store)
+	attachSignature(t, store, subject, "application/spdx+json", "application/spdx+json", []byte(`{"sbom":"x"}`))
+
+	got, err := discoverSignatureBundle(context.Background(), store, subject)
+	require.NoError(t, err)
+	require.Nil(t, got, "a non-signature referrer must not match signature discovery")
 }
 
 // TestDiscoverSignatureBundle_MalformedReferrerErrors confirms a cosign-typed

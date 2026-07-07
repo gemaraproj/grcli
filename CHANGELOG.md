@@ -7,6 +7,16 @@ change bumps the minor version.
 
 ### Fixed
 
+- **`verify` now discovers signatures attached by cosign 3.x.** The referrer
+  artifactType a cosign-signed catalog carries depends on the signer's cosign
+  major version: 2.6.x (`--new-bundle-format`) stamps
+  `https://sigstore.dev/cosign/sign/v1`, while 3.x (bundle by default) stamps
+  `application/vnd.dev.sigstore.bundle.v0.3+json` — the bundle inside is
+  identical. grcli filtered on the 2.6.x value only, so a cosign-3.x-signed
+  catalog verified as "no signature attached". Discovery now accepts both
+  stamp variants. (Found by the first live zero-flag verify against preview,
+  2026-07-07; supersedes the protocol's "do not cross these" mediatype rule,
+  whose premise predates cosign 3.x.)
 - **The cosign floor for `publish` signing is ≥ 2.6.0, not ≥ 2.4.0 as v0.4.1
   claimed.** cosign added `--new-bundle-format` to `verify` in 2.4.0 but to
   `sign` only in **2.6.0** (confirmed against the release tags' source), so on
