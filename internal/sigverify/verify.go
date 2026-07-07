@@ -252,13 +252,13 @@ func (v *Verifier) verifyEntity(entity verify.SignedEntity, artifactDigest strin
 		return Result{}, errors.New("verified signature carries no certificate identity (key-based signing is not accepted on the keyless path)")
 	}
 	cert := res.Signature.Certificate
-	if cert.Extensions.Issuer == "" || cert.SubjectAlternativeName == "" {
+	if cert.Issuer == "" || cert.SubjectAlternativeName == "" {
 		return Result{}, errors.New("verified certificate is missing OIDC issuer or SAN")
 	}
 	// The canonical signer identity comes from the shared wire-contract module
 	// (ADR-0035) — the SAME definition the hub uses — so grcli's confirmation
 	// names the identity in exactly the form the hub recorded.
 	return Result{
-		Identity: identity.CanonicalKeylessIdentity(cert.Extensions.Issuer, cert.SubjectAlternativeName),
+		Identity: identity.CanonicalKeylessIdentity(cert.Issuer, cert.SubjectAlternativeName),
 	}, nil
 }
