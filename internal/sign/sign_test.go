@@ -176,8 +176,21 @@ func TestBundleFormatArgsRejectsOutOfRangeCosign(t *testing.T) {
 	t.Run("too old names the required version", func(t *testing.T) {
 		recordingCosign(t, "v2.2.0")
 		_, err := BundleFormatArgs(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "2.4.0") {
-			t.Fatalf("want a too-old error naming cosign 2.4.0, got %v", err)
+		if err == nil || !strings.Contains(err.Error(), "2.6.0") {
+			t.Fatalf("want a too-old error naming cosign 2.6.0, got %v", err)
+		}
+	})
+
+	// Regression pin for the 2.4.x–2.5.x dead zone: those cosigns accept
+	// --new-bundle-format on `verify` but NOT on `sign` (the flag reached
+	// `sign` only in 2.6.0), so they must be rejected up front rather than
+	// die mid-publish on cosign's raw `unknown flag`. Caught live by a
+	// GitHub Actions publish pinned to cosign v2.5.2 (2026-07-07).
+	t.Run("2.5.x is in the sign-flag dead zone", func(t *testing.T) {
+		recordingCosign(t, "v2.5.2")
+		_, err := BundleFormatArgs(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "2.6.0") {
+			t.Fatalf("want a too-old error naming cosign 2.6.0, got %v", err)
 		}
 	})
 

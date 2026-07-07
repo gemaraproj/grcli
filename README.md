@@ -41,11 +41,12 @@ cosign verify ghcr.io/revanite-io/grcli:latest \
 
 Some commands shell out to external tools:
 
-- **`cosign` ≥ 2.4.0** on `PATH` — `publish` (signing) and key-based
+- **`cosign` ≥ 2.6.0** on `PATH` — `publish` (signing) and key-based
   `verify --cosign-key` only. grcli detects the cosign version and adapts to the
   Sigstore bundle format across the whole range (passing `--new-bundle-format`
-  on 2.4–2.x, relying on the default on 3.x), so any cosign ≥ 2.4.0 works and
-  cosign 3.x is fully supported. A cosign below 2.4.0 fails fast with a clear
+  on 2.6–2.x, relying on the default on 3.x), so any cosign ≥ 2.6.0 works and
+  cosign 3.x is fully supported. (2.4.x–2.5.x are excluded: those accept the
+  flag on `verify` but not on `sign`.) A cosign below 2.6.0 fails fast with a clear
   message rather than a raw `unknown flag`. **Keyless `verify` needs no external
   tools**: it verifies in-process against Sigstore (ADR-0046), so consumers can
   verify with just the `grcli` binary. https://docs.sigstore.dev/cosign/installation/

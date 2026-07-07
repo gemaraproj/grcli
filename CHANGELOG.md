@@ -7,6 +7,19 @@ change bumps the minor version.
 
 ### Fixed
 
+- **The cosign floor for `publish` signing is ≥ 2.6.0, not ≥ 2.4.0 as v0.4.1
+  claimed.** cosign added `--new-bundle-format` to `verify` in 2.4.0 but to
+  `sign` only in **2.6.0** (confirmed against the release tags' source), so on
+  cosign 2.4.x–2.5.x v0.4.1 still died mid-publish on the raw
+  `unknown flag: --new-bundle-format` its version gate was built to prevent —
+  caught live by a CI publish pinned to cosign v2.5.2. The gate now fails fast
+  below 2.6.0 with the corrected floor in the message; cosign ≥ 3.x is
+  unaffected (the flag is omitted there entirely).
+
+## [0.4.1] - 2026-07-05
+
+### Fixed
+
 - **`publish` signing no longer hard-codes `--new-bundle-format`, so it works
   across the whole supported cosign range instead of a narrow band.** grcli now
   detects the cosign version (`cosign version --json`) and selects the Sigstore

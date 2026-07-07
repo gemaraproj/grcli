@@ -46,10 +46,12 @@ const (
 // detected cosign version. See that function for the rationale.
 const FlagNewBundleFormat = "--new-bundle-format"
 
-// minBundleFormatCosign is the oldest cosign that understands
-// --new-bundle-format: the flag was introduced in cosign 2.4.0. Below this,
-// cosign aborts with `unknown flag: --new-bundle-format`.
-const minBundleFormatCosign = "v2.4.0"
+// minBundleFormatCosign is the oldest cosign whose SIGN command understands
+// --new-bundle-format: cosign added it to `verify` in 2.4.0 but to `sign`
+// only in 2.6.0 (checked against the release tags' options/sign.go — 2.4.x
+// and 2.5.x abort with `unknown flag: --new-bundle-format`). Since this
+// helper feeds the sign path, the floor is the sign flag's, not verify's.
+const minBundleFormatCosign = "v2.6.0"
 
 // bundleDefaultCosign is the cosign version at which the Sigstore bundle format
 // became the DEFAULT and --new-bundle-format was deprecated (cosign 3.0.0). At
@@ -62,9 +64,9 @@ const bundleDefaultCosign = "v3.0.0"
 // version so grcli works across the whole supported cosign range instead of the
 // narrow 2.4.0–2.6.x band the flag was hard-coded for:
 //
-//	cosign < 2.4.0          → error   (flag doesn't exist; fail fast with a clear
-//	                                    message instead of cosign's raw `unknown flag`)
-//	2.4.0 ≤ cosign < 3.0.0  → ["--new-bundle-format"]  (flag is first-class here)
+//	cosign < 2.6.0          → error   (flag doesn't exist on `sign`; fail fast with a
+//	                                    clear message instead of cosign's raw `unknown flag`)
+//	2.6.0 ≤ cosign < 3.0.0  → ["--new-bundle-format"]  (flag is first-class here)
 //	cosign ≥ 3.0.0          → nil     (bundle format is the default; passing the
 //	                                    deprecated flag only warns and will break
 //	                                    when cosign removes it)
@@ -82,8 +84,8 @@ func BundleFormatArgs(ctx context.Context) ([]string, error) {
 	switch {
 	case semver.Compare(v, minBundleFormatCosign) < 0:
 		return nil, fmt.Errorf("cosign %s is too old for grc.store's Sigstore bundle "+
-			"signature format, which needs cosign ≥ 2.4.0 — pin a newer cosign "+
-			"(e.g. sigstore/cosign-installer with a version ≥ v2.4.0), or pass "+
+			"signature format, which needs cosign ≥ 2.6.0 — pin a newer cosign "+
+			"(e.g. sigstore/cosign-installer with a version ≥ v2.6.0), or pass "+
 			"--no-sign to publish without provenance", v)
 	case semver.Compare(v, bundleDefaultCosign) < 0:
 		return []string{FlagNewBundleFormat}, nil
