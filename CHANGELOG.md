@@ -3,6 +3,29 @@
 Notable changes to `grcli`. This project is pre-1.0; while on `v0.x`, a breaking
 change bumps the minor version.
 
+## [Unreleased]
+
+> **Not yet releasable.** The change below needs a live CI smoke (a keyless
+> publish from a runner with **no cosign installed**, then a zero-flag verify)
+> before it is tagged — the Fulcio/Rekor/GitHub-OIDC path cannot be exercised
+> offline. When that passes it becomes the next minor (v0.6.0). Tag v0.5.0 from
+> the commit *before* the in-process-signing work so it can ship independently.
+
+### Changed
+
+- **Keyless publish signing runs IN-PROCESS via `sigstore-go`; `cosign` is no
+  longer required for CI publishing (ADR-0049).** `grcli publish` in GitHub
+  Actions now requests the OIDC token itself, obtains a Fulcio certificate,
+  signs the manifest digest (a DSSE-wrapped in-toto statement, byte-shaped like
+  `cosign sign --new-bundle-format`), logs it in Rekor, and attaches the bundle
+  as an OCI referrer — all with the library grcli already uses to *verify*
+  (ADR-0046), so publishing needs no external tools. This removes the cosign
+  version-band fragility entirely (the `--new-bundle-format` gating, the 2.6.0
+  floor, and the 2.4–2.5 dead-zone that broke publishing). `cosign` remains a
+  prerequisite **only** for `--cosign-key` (key-based) signing and
+  `verify --cosign-key`. Air-gapped/private-Sigstore signing: point
+  `GRCLI_FULCIO_URL` / `GRCLI_REKOR_URL` at your instance.
+
 ## [0.5.0] - 2026-07-10
 
 ### Changed

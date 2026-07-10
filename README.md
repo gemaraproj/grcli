@@ -41,15 +41,13 @@ cosign verify ghcr.io/revanite-io/grcli:latest \
 
 Some commands shell out to external tools:
 
-- **`cosign` ≥ 2.6.0** on `PATH` — `publish` (signing) and key-based
-  `verify --cosign-key` only. grcli detects the cosign version and adapts to the
-  Sigstore bundle format across the whole range (passing `--new-bundle-format`
-  on 2.6–2.x, relying on the default on 3.x), so any cosign ≥ 2.6.0 works and
-  cosign 3.x is fully supported. (2.4.x–2.5.x are excluded: those accept the
-  flag on `verify` but not on `sign`.) A cosign below 2.6.0 fails fast with a clear
-  message rather than a raw `unknown flag`. **Keyless `verify` needs no external
-  tools**: it verifies in-process against Sigstore (ADR-0046), so consumers can
-  verify with just the `grcli` binary. https://docs.sigstore.dev/cosign/installation/
+- **`cosign` ≥ 2.6.0** on `PATH` — **only** for key-based signing
+  (`publish --cosign-key`) and key-based `verify --cosign-key`. When cosign is
+  used, grcli detects its version and adapts the Sigstore bundle-format flag
+  (`--new-bundle-format` on 2.6–2.x, omitted on 3.x). **Keyless CI publishing and
+  all keyless `verify`/`unpack` need no external tools** — grcli signs (ADR-0049)
+  and verifies (ADR-0046) in-process against Sigstore, so the common path is just
+  the `grcli` binary. https://docs.sigstore.dev/cosign/installation/
 - **`cue`** on `PATH` — `validate`. https://cuelang.org
 - **A Gemara spec checkout** — `validate`.
   `git clone https://github.com/gemaraproj/gemara`

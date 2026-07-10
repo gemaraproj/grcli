@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-Revanite-Proprietary
 
-// Package sign drives optional cosign signing as a separate step after
-// push. The integration is a shell-out: we don't vendor sigstore into
-// grcli — the surface area is too large for a feature whose verifier
-// half doesn't exist on the hub yet. cosign-on-PATH is the contract;
-// CI runners and most developer environments have it.
+// Package sign signs a pushed artifact as a separate step after push.
+//
+// Keyless signing (the CI trusted-publishing path) runs IN-PROCESS via
+// sigstore-go — the same library internal/sigverify uses to verify — so
+// publishing needs no cosign (ADR-0049, symmetric to ADR-0046's in-process
+// verify). See keyless.go. Key-based signing (--cosign-key) still shells out to
+// cosign, the one remaining path that needs it on PATH.
 package sign
 
 import (
@@ -17,6 +19,8 @@ import (
 	"strings"
 
 	"golang.org/x/mod/semver"
+
+	"github.com/revanite-io/grcli/internal/registry"
 )
 
 // Mode reports how sign() resolved its trust material.
@@ -149,18 +153,28 @@ type Result struct {
 
 // Options carries the user-facing knobs.
 type Options struct {
-	// Disabled is set by --no-sign; when true we never invoke cosign.
+	// Disabled is set by --no-sign; when true we never sign.
 	Disabled bool
 	// KeyPath is the cosign key file path; equivalent to cosign sign --key.
-	// If empty and not in CI, signing fails (the publish errors) unless
-	// Disabled (--no-sign) is set.
+	// Selects the key-based (cosign shell-out) path. Empty in CI, where the
+	// keyless in-process path is used.
 	KeyPath string
-	// Reference is the full <registry>/<repository>:<tag> to sign.
+	// Reference is the full <registry>/<repository>:<tag> — used for display
+	// and as the cosign key-mode target.
 	Reference string
-	// PlainHTTP signals the registry speaks plain HTTP (a local dev zot),
-	// so cosign needs --allow-http-registry to push the signature instead
-	// of defaulting to HTTPS. Off for production HTTPS registries.
+	// PlainHTTP signals the registry speaks plain HTTP (a local dev zot).
+	// For key mode, cosign gets --allow-http-registry; for keyless, the
+	// scheme in RegistryHost drives it.
 	PlainHTTP bool
+
+	// RegistryHost, Repository, and ManifestDigest are the coordinates the
+	// keyless in-process path (ADR-0049) needs: it signs ManifestDigest and
+	// attaches the bundle as an OCI referrer at RegistryHost/Repository. Unset
+	// for key mode (cosign resolves the reference itself). RegistryHost keeps
+	// any http(s):// scheme so the oras push targets the right transport.
+	RegistryHost   string
+	Repository     string
+	ManifestDigest string
 }
 
 // Preflight reports whether a subsequent Sign call will be able to
@@ -186,25 +200,25 @@ func Preflight(ctx context.Context, opts Options) error {
 	if opts.Disabled {
 		return nil
 	}
-	if _, err := exec.LookPath("cosign"); err != nil {
-		return errors.New("cosign not found on PATH — install it " +
-			"(e.g. the sigstore/cosign-installer step in CI) so the publish can be signed, " +
-			"or pass --no-sign to publish without provenance")
-	}
-	if _, err := BundleFormatArgs(ctx); err != nil {
-		return err
-	}
 	switch {
 	case os.Getenv("GITHUB_ACTIONS") == "true":
-		// Keyless: cosign reads the GHA OIDC token from the runtime env
-		// (ACTIONS_ID_TOKEN_REQUEST_TOKEN / _URL), which requires
-		// `permissions: id-token: write` on the workflow.
+		// Keyless in-process (ADR-0049): NO cosign needed — grcli requests the
+		// GHA OIDC token itself and signs via sigstore-go. Requires
+		// `permissions: id-token: write` (which populates the request env).
 		if os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN") == "" {
 			return errors.New("GITHUB_ACTIONS=true but ACTIONS_ID_TOKEN_REQUEST_TOKEN is unset — " +
 				"add `permissions: id-token: write` to the workflow for keyless signing, or pass --no-sign")
 		}
 		return nil
 	case opts.KeyPath != "":
+		// Key-based signing is the ONLY path that still shells out to cosign.
+		if _, err := exec.LookPath("cosign"); err != nil {
+			return errors.New("cosign not found on PATH — required only for --cosign-key (key-based) signing; " +
+				"keyless CI signing needs no external tools. Install cosign, or pass --no-sign")
+		}
+		if _, err := BundleFormatArgs(ctx); err != nil {
+			return err
+		}
 		return nil
 	default:
 		return errors.New("no signing material — pass --cosign-key (or COSIGN_KEY) for local signing, " +
@@ -221,9 +235,8 @@ func Preflight(ctx context.Context, opts Options) error {
 // Decision tree:
 //
 //	--no-sign            → ModeSkipped, no error
-//	cosign not on PATH   → error
-//	GITHUB_ACTIONS=true   → ModeKeyless via OIDC (error if id-token missing)
-//	KeyPath != ""        → ModeKey
+//	GITHUB_ACTIONS=true   → ModeKeyless, in-process via sigstore-go (error if id-token missing)
+//	KeyPath != ""        → ModeKey, cosign shell-out (error if cosign absent)
 //	otherwise            → error (no signing material)
 //
 // Callers should run Preflight before pushing; Sign repeats the same
@@ -240,24 +253,28 @@ func Sign(ctx context.Context, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("sign: %w", err)
 	}
 
+	// Keyless in CI runs fully in-process (ADR-0049): sign the manifest digest
+	// via sigstore-go and attach the bundle as an OCI referrer — no cosign.
+	if os.Getenv("GITHUB_ACTIONS") == "true" {
+		if opts.ManifestDigest == "" || opts.RegistryHost == "" || opts.Repository == "" {
+			return nil, errors.New("sign: keyless signing needs the manifest digest, registry host, and repository")
+		}
+		bundleJSON, err := signKeylessInProcess(ctx, opts.ManifestDigest)
+		if err != nil {
+			return nil, fmt.Errorf("keyless sign: %w", err)
+		}
+		if err := registry.AttachSignatureReferrer(ctx, opts.RegistryHost, opts.Repository, opts.ManifestDigest, bundleJSON); err != nil {
+			return nil, fmt.Errorf("attaching signature to registry: %w", err)
+		}
+		return &Result{Mode: ModeKeyless}, nil
+	}
+
+	// Key-based signing shells out to cosign (the one remaining cosign path).
 	// Select the signature-format flag for the detected cosign (empty on
-	// cosign ≥ 3.0.0, where the bundle format is already the default).
-	// Preflight already validated the version, so this cannot error here.
+	// cosign ≥ 3.0.0). Preflight already validated the version.
 	bundleArgs, err := BundleFormatArgs(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("sign: %w", err)
-	}
-
-	// Preflight guarantees cosign is present and (GHA-with-id-token OR a
-	// key) is available. Prefer keyless in CI, mirroring the old order.
-	if os.Getenv("GITHUB_ACTIONS") == "true" {
-		args := append([]string{"sign", "--yes"}, bundleArgs...)
-		args = append(args, registryFlags(opts)...)
-		args = append(args, opts.Reference)
-		if err := runCosign(ctx, args...); err != nil {
-			return nil, fmt.Errorf("cosign keyless sign: %w", err)
-		}
-		return &Result{Mode: ModeKeyless}, nil
 	}
 	args := append([]string{"sign", "--yes"}, bundleArgs...)
 	args = append(args, "--key", opts.KeyPath)

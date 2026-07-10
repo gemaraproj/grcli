@@ -201,8 +201,24 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 		return nil
 	}
 
-	return signAndNotify(ctx, v, target.repository, target.tag, result.Reference,
-		strings.HasPrefix(target.registryHost, "http://"))
+	return signAndNotify(ctx, v, signContext{
+		repository:     target.repository,
+		tag:            target.tag,
+		reference:      result.Reference,
+		registryHost:   target.registryHost,
+		manifestDigest: result.ManifestDigest,
+		plainHTTP:      strings.HasPrefix(target.registryHost, "http://"),
+	})
+}
+
+// signContext carries the push coordinates the sign + notify step needs.
+type signContext struct {
+	repository     string
+	tag            string
+	reference      string // <registry>/<repository>:<tag>, bare host
+	registryHost   string // scheme-prefixed oras dial target
+	manifestDigest string // sha256:… of the just-pushed manifest
+	plainHTTP      bool
 }
 
 // resolveTarget merges --repository/--url/--dry-run with the
@@ -283,12 +299,15 @@ func pushBundle(ctx context.Context, target publishTarget, in registry.PackInput
 // the cosign subprocess inside sign.Sign writes to os.Stdout/os.Stderr
 // directly; routing grcli's own status lines through a different writer
 // would create a misleading "I control the output" contract.
-func signAndNotify(ctx context.Context, v *viper.Viper, repository, tag, reference string, plainHTTP bool) error {
+func signAndNotify(ctx context.Context, v *viper.Viper, sc signContext) error {
 	signResult, err := sign.Sign(ctx, sign.Options{
-		Disabled:  v.GetBool(flagNoSign),
-		KeyPath:   v.GetString(flagCosignKey),
-		Reference: reference,
-		PlainHTTP: plainHTTP,
+		Disabled:       v.GetBool(flagNoSign),
+		KeyPath:        v.GetString(flagCosignKey),
+		Reference:      sc.reference,
+		PlainHTTP:      sc.plainHTTP,
+		RegistryHost:   sc.registryHost,
+		Repository:     sc.repository,
+		ManifestDigest: sc.manifestDigest,
 	})
 	if err != nil {
 		return fmt.Errorf("sign: %w", err)
@@ -308,7 +327,7 @@ func signAndNotify(ctx context.Context, v *viper.Viper, repository, tag, referen
 	if err != nil {
 		return err
 	}
-	syncResp, err := hub.New(hubURL, token).Sync(ctx, repository, tag)
+	syncResp, err := hub.New(hubURL, token).Sync(ctx, sc.repository, sc.tag)
 	if err != nil {
 		return fmt.Errorf("hub sync: %w", err)
 	}

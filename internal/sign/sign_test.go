@@ -50,13 +50,22 @@ func TestPreflight(t *testing.T) {
 		}
 	})
 
-	t.Run("cosign not on PATH fails closed", func(t *testing.T) {
+	t.Run("CI keyless needs NO cosign on PATH (ADR-0049)", func(t *testing.T) {
 		cosignAbsent(t)
 		t.Setenv("GITHUB_ACTIONS", "true")
-		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "tok") // material present, but no cosign
-		err := Preflight(context.Background(), Options{})
+		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "tok")
+		if err := Preflight(context.Background(), Options{}); err != nil {
+			t.Fatalf("keyless CI signing is in-process and must NOT require cosign, got %v", err)
+		}
+	})
+
+	t.Run("--cosign-key without cosign fails closed", func(t *testing.T) {
+		cosignAbsent(t)
+		t.Setenv("GITHUB_ACTIONS", "")
+		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
+		err := Preflight(context.Background(), Options{KeyPath: "/keys/x.key"})
 		if err == nil || !strings.Contains(err.Error(), "cosign") {
-			t.Fatalf("want a cosign-not-found error, got %v", err)
+			t.Fatalf("want a cosign-not-found error for --cosign-key, got %v", err)
 		}
 	})
 
@@ -115,11 +124,11 @@ func recordingCosign(t *testing.T, version string) string {
 }
 
 // TestSignBundleFormatByCosignVersion pins that grcli selects the Sigstore
-// bundle-as-referrer format (ADR-0035) correctly across the cosign range,
-// instead of hard-coding --new-bundle-format for the narrow band that flag
-// exists in: it passes the flag on cosign 2.4–2.x (where it's first-class) and
-// omits it on cosign ≥ 3.0.0 (where the bundle format is the default and the
-// flag is deprecated). Both keyless and key paths are covered.
+// bundle-as-referrer format (ADR-0035) correctly across the cosign range on the
+// KEY-based path — the only path that still shells out to cosign (ADR-0049 moved
+// keyless in-process, so it no longer invokes cosign at all). It passes
+// --new-bundle-format on cosign 2.6–2.x and omits it on ≥ 3.0.0 (where the
+// bundle format is the default and the flag is deprecated).
 func TestSignBundleFormatByCosignVersion(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -131,29 +140,17 @@ func TestSignBundleFormatByCosignVersion(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Run("keyless", func(t *testing.T) {
-				argsFile := recordingCosign(t, tc.version)
-				t.Setenv("GITHUB_ACTIONS", "true")
-				t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "tok")
-				if _, err := Sign(context.Background(), Options{Reference: "reg/repo:1"}); err != nil {
-					t.Fatalf("sign: %v", err)
-				}
-				assertBundleFlag(t, argsFile, tc.wantFlag)
-			})
-
-			t.Run("key", func(t *testing.T) {
-				argsFile := recordingCosign(t, tc.version)
-				t.Setenv("GITHUB_ACTIONS", "")
-				t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
-				keyPath := filepath.Join(t.TempDir(), "cosign.key")
-				if err := os.WriteFile(keyPath, []byte("x"), 0o600); err != nil {
-					t.Fatalf("write key: %v", err)
-				}
-				if _, err := Sign(context.Background(), Options{Reference: "reg/repo:1", KeyPath: keyPath}); err != nil {
-					t.Fatalf("sign: %v", err)
-				}
-				assertBundleFlag(t, argsFile, tc.wantFlag)
-			})
+			argsFile := recordingCosign(t, tc.version)
+			t.Setenv("GITHUB_ACTIONS", "")
+			t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
+			keyPath := filepath.Join(t.TempDir(), "cosign.key")
+			if err := os.WriteFile(keyPath, []byte("x"), 0o600); err != nil {
+				t.Fatalf("write key: %v", err)
+			}
+			if _, err := Sign(context.Background(), Options{Reference: "reg/repo:1", KeyPath: keyPath}); err != nil {
+				t.Fatalf("sign: %v", err)
+			}
+			assertBundleFlag(t, argsFile, tc.wantFlag)
 		})
 	}
 }

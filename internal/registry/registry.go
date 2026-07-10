@@ -7,6 +7,7 @@
 package registry
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/gemaraproj/go-gemara/bundle"
+	godigest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/revanite-io/grc-store-protocol/limits"
 	"github.com/revanite-io/grc-store-protocol/mediatype"
@@ -195,6 +197,50 @@ const maxSignatureBlobBytes = limits.MaxPluginBlobBytes
 // Auth flows through the same credential chain as UnpackRemote (the
 // GRCLI_REGISTRY_TOKEN the caller minted via ensureRegistryToken is read by
 // dockerCredentials), so no token needs threading through this signature.
+// AttachSignatureReferrer pushes a Sigstore signature bundle to the registry as
+// an OCI 1.1 referrer of the artifact manifest identified by subjectDigest —
+// the step `cosign sign` used to perform. It is the in-process publish half of
+// ADR-0049 (grcli signs keyless without cosign). The referrer's artifactType is
+// mediatype.CosignSignReferrer, and its single layer carries the bundle JSON
+// under mediatype.SigstoreBundle — the exact pair FetchSignatureBundle /
+// ociref (hub) discover. Auth flows through the same credential chain as the
+// bundle push: the GRCLI_REGISTRY_TOKEN the publish flow minted and exported.
+func AttachSignatureReferrer(ctx context.Context, registryHost, repository, subjectDigest string, bundleJSON []byte) error {
+	if subjectDigest == "" {
+		return errors.New("subject digest is required")
+	}
+	if len(bundleJSON) == 0 {
+		return errors.New("signature bundle is empty")
+	}
+	repo, err := newRemoteRepo(registryHost, repository)
+	if err != nil {
+		return err
+	}
+	// The subject descriptor the referrer attaches to. Resolve by digest so the
+	// size/mediaType are exactly the pushed manifest's (oras requires a full
+	// descriptor for Subject).
+	subject, err := repo.Resolve(ctx, subjectDigest)
+	if err != nil {
+		return fmt.Errorf("resolving subject %s: %w", subjectDigest, err)
+	}
+	// Push the bundle blob, then the referrer manifest that carries it.
+	bundleDesc := ocispec.Descriptor{
+		MediaType: mediatype.SigstoreBundle,
+		Digest:    godigest.FromBytes(bundleJSON),
+		Size:      int64(len(bundleJSON)),
+	}
+	if err := repo.Push(ctx, bundleDesc, bytes.NewReader(bundleJSON)); err != nil {
+		return fmt.Errorf("pushing signature bundle blob: %w", err)
+	}
+	if _, err := oras.PackManifest(ctx, repo, oras.PackManifestVersion1_1, mediatype.CosignSignReferrer, oras.PackManifestOptions{
+		Subject: &subject,
+		Layers:  []ocispec.Descriptor{bundleDesc},
+	}); err != nil {
+		return fmt.Errorf("pushing signature referrer manifest: %w", err)
+	}
+	return nil
+}
+
 func FetchSignatureBundle(ctx context.Context, registryHost, repository, tag string) (bundleJSON []byte, artifactDigest string, err error) {
 	if tag == "" {
 		return nil, "", errors.New("tag is required")

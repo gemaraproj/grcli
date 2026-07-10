@@ -26,7 +26,7 @@ on:
 permissions:
   contents: read
   id-token: write                  # issue the workflow OIDC token
-                                   # (hub auth + cosign keyless signing)
+                                   # (hub auth + keyless signing)
 
 jobs:
   publish:
@@ -43,16 +43,9 @@ jobs:
           oras pull ghcr.io/revanite-io/grcli:v0.1.0 --platform linux/amd64
           sudo install grcli /usr/local/bin/grcli
 
-      # Required for keyless signing; the publish step signs the bundle
-      # with the same workflow OIDC identity that authorizes the push.
-      # Pin the cosign version: grcli needs cosign >= 2.4.0 for the Sigstore
-      # bundle format, and the installer's unpinned default has shipped older
-      # cosign in the past. grcli adapts to whatever cosign is here (2.4-2.x or
-      # 3.x); pinning just keeps CI reproducible and above the 2.4.0 floor.
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
-        with:
-          cosign-release: 'v3.0.6'
-
+      # No cosign step needed: grcli ≥ v0.6.0 signs keyless in-process via
+      # sigstore-go (ADR-0049), using the same workflow OIDC identity that
+      # authorizes the push. (Only `--cosign-key` signing needs cosign on PATH;
+      # add a sigstore/cosign-installer step if you use it.)
       - name: Publish
         run: grcli publish -f controls.yaml --url https://hub.grc.store
