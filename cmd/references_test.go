@@ -92,7 +92,7 @@ func TestUnpack_References_FromCache(t *testing.T) {
 
 	output := filepath.Join(workdir, "unpacked")
 	out := runRoot(t, "unpack", "--url", srv.URL, "--repository", "myorg/mycat",
-		"--version", "1.0.0", "--with-imports", "--output", output)
+		"--version", "1.0.0", "--with-imports", "--no-verify", "--output", output)
 	require.Contains(t, out, "resolved 1 reference(s), skipped 0")
 
 	refDir := filepath.Join(output, "references", "imports", "acme", "baseline@2.1.0")
@@ -151,7 +151,7 @@ func TestUnpack_References_LicenseHealedOnCacheHit(t *testing.T) {
 
 	output := filepath.Join(workdir, "unpacked")
 	out := runRoot(t, "unpack", "--url", srv.URL, "--repository", "myorg/mycat",
-		"--version", "1.0.0", "--with-imports", "--output", output)
+		"--version", "1.0.0", "--with-imports", "--no-verify", "--output", output)
 	require.Contains(t, out, "resolved 1 reference(s), skipped 0")
 
 	// The healed license lands in index.json...
@@ -206,7 +206,7 @@ func TestUnpack_References_LicenseHealMemoized(t *testing.T) {
 
 	for run := 1; run <= 2; run++ {
 		out := runRoot(t, "unpack", "--url", srv.URL, "--repository", "myorg/mycat",
-			"--version", "1.0.0", "--with-imports", "--output", filepath.Join(workdir, fmt.Sprintf("out%d", run)))
+			"--version", "1.0.0", "--with-imports", "--no-verify", "--output", filepath.Join(workdir, fmt.Sprintf("out%d", run)))
 		require.Contains(t, out, "resolved 1 reference(s), skipped 0")
 	}
 	require.Equal(t, 1, refCatalogCalls,
@@ -264,7 +264,7 @@ func TestUnpack_References_OfflineWhenDiscoveryDown(t *testing.T) {
 
 	output := filepath.Join(workdir, "unpacked")
 	out := runRoot(t, "unpack", "--url", srv.URL, "--repository", "myorg/mycat",
-		"--version", "1.0.0", "--with-imports", "--output", output)
+		"--version", "1.0.0", "--with-imports", "--no-verify", "--output", output)
 	require.Contains(t, out, "resolved 1 reference(s), skipped 0",
 		"a cached reference must resolve even when discovery is unreachable")
 	require.FileExists(t, filepath.Join(output, "references", "imports", "acme", "baseline@2.1.0", "baseline.yaml"))

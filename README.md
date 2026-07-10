@@ -78,7 +78,7 @@ Run `grcli <command> --help` for the full flag list. The typical flow is
 | `validate` | Check YAML against the Gemara spec via `cue vet`. |
 | `publish` | Pack an artifact + provenance into a signed OCI bundle, push it, and notify the hub. |
 | `verify` | Verify a remote bundle's Sigstore signature (keyless: in-process, no cosign) — with no trust flags, against the signer identity the hub recorded at ingest. |
-| `unpack` | Pull a bundle and write its files + manifest to disk. |
+| `unpack` | Verify a remote bundle's signature (fail-closed; `--no-verify` to skip) then write its files + manifest to disk. |
 | `cat` | Print an artifact's Gemara content to stdout (no files written) — for piping into `yq`. |
 | `logout` | Forget locally-stored credentials. |
 
@@ -113,8 +113,12 @@ These default to the public hub at `https://hub.grc.store`; add `--url
 
 ### Reading artifacts: `unpack` vs `cat`
 
-`unpack` writes an artifact's files **and** its `bundle.json` manifest (with
-provenance) into a directory. `cat` streams the **Gemara content only** to
+`unpack` **verifies the artifact's signature before writing anything** and fails
+closed — an unsigned or mis-signed artifact is refused and no files land on disk
+(same check as `verify`; `--no-verify` opts out, `--source` layouts have no
+signature to check). It then writes the artifact's files **and** its
+`bundle.json` manifest (with provenance) into a directory. `cat` streams the
+**Gemara content only** to
 stdout — no manifest, no files on disk — so it pipes cleanly into `yq` (the
 content is YAML; for `jq`, convert first with `yq -o=json`). A
 single-file bundle prints verbatim; a multi-file bundle prints as a `---`
@@ -130,7 +134,9 @@ given `namespace/id/version` is stored (the whole bundle — files + manifest),
 and later `unpack`/`cat` of the same coordinate — or references to it — are
 served from the cache with **no network at all**. grc.store tags are immutable,
 so a cache hit can never be stale. The cache lives at `$GRCLI_CACHE` (default
-`os.UserCacheDir()/grcli`) and grows without bound (no GC yet).
+`os.UserCacheDir()/grcli`) and grows without bound (no GC yet). Note: a default
+`unpack` still contacts the hub/registry to *verify* the signature even on a
+content cache hit (ADR-0048); `--no-verify` restores a fully offline cache hit.
 
 - `--no-cache` bypasses the cache for a single run (fresh pull, nothing stored).
 - Set `cache-enabled: false` in config (below) to disable it durably.

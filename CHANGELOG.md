@@ -3,7 +3,24 @@
 Notable changes to `grcli`. This project is pre-1.0; while on `v0.x`, a breaking
 change bumps the minor version.
 
-## [0.4.2] - 2026-07-07
+## [0.5.0] - 2026-07-10
+
+### Changed
+
+- **BREAKING: `unpack` verifies the artifact's signature by default and fails
+  closed (ADR-0048).** A remote (`--url`) unpack now discovers the Sigstore
+  signature and verifies it in-process BEFORE writing anything — the same check
+  as `grcli verify` (zero-flag against the identity the hub recorded at ingest,
+  or `--certificate-identity` to assert the signer yourself and bypass the hub).
+  An unsigned, mis-signed, or unverifiable artifact is refused and **no files are
+  written**. Pass `--no-verify` to write without verifying (INSECURE); a local
+  `--source` layout has no registry signature and is always written unverified.
+  - *Migration:* scripts that unpacked unsigned/legacy content now fail until they
+    pass `--no-verify` or the content is re-published signed (same migration class
+    as the earlier signature-format cutovers).
+  - *Offline note:* a cached unpack is no longer fully offline — verification
+    contacts the hub/registry even on a content cache hit. Use `--no-verify` for
+    the previous offline-from-cache behavior.
 
 ### Fixed
 

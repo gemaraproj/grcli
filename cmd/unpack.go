@@ -22,6 +22,7 @@ import (
 	"github.com/revanite-io/grcli/internal/hub"
 	"github.com/revanite-io/grcli/internal/refs"
 	"github.com/revanite-io/grcli/internal/registry"
+	"github.com/revanite-io/grcli/internal/sigverify"
 )
 
 const (
@@ -35,6 +36,12 @@ const (
 	flagWithImports    = "with-imports"
 	flagWithReferences = "with-references"
 	flagNoCache        = "no-cache"
+
+	// flagNoVerify opts out of the default pre-unpack signature verification
+	// (ADR-0048). flagCertIdentity / flagCertOIDCIssuer are defined in verify.go
+	// and reused here so an unpack can assert an identity instead of trusting the
+	// hub-recorded one.
+	flagNoVerify = "no-verify"
 )
 
 func newUnpackCmd(v *viper.Viper) *cobra.Command {
@@ -48,6 +55,15 @@ written alongside as bundle.json.
 The source can be a local OCI image layout (--source, the shape produced
 by 'grcli publish --dry-run') or a remote registry discovered from the
 hub (--url plus --repository). Exactly one of --source / --url must be set.
+
+Verification (ADR-0048): a remote (--url) unpack VERIFIES the artifact's
+Sigstore signature in-process before writing anything, and fails closed —
+an unsigned, mis-signed, or unverifiable artifact is refused and no files
+are written. This is the same check as 'grcli verify': zero-flag against
+the identity the hub recorded at ingest, or --certificate-identity to
+assert the signer yourself and bypass the hub. Pass --no-verify to write
+without verifying (INSECURE). A local --source layout has no registry
+signature to check, so it is always written without verification.
 
 Caching (ADR-0042): a remote (--url) fetch is served from a global on-disk
 cache when the same namespace/id/version has been fetched before — a cache
@@ -73,9 +89,10 @@ A reference whose host is 'grc.store' resolves against your --url target
 reference to any other host is reported and skipped. Resolution needs a
 hub target, so pass --url. Pulled artifacts are cached globally (set
 $GRCLI_CACHE to override the location); --no-cache bypasses the cache.
-Note: in this release pulled references are NOT signature-verified yet —
-that is a forthcoming follow-up. A license that differs from the primary's
-is reported as a warning, not an error.
+Note: the verification above covers the PRIMARY artifact; pulled references
+(--with-imports / --with-references) are NOT signature-verified yet — that
+is a forthcoming follow-up. A license that differs from the primary's is
+reported as a warning, not an error.
 
 Examples:
   # From a local 'publish --dry-run' output
@@ -102,6 +119,9 @@ Examples:
 	flags.Bool(flagWithImports, false, "also resolve and pull the artifact's `imports` references from the hub (requires --url)")
 	flags.Bool(flagWithReferences, false, "also resolve and pull ALL of the artifact's mapping references from the hub (requires --url); superset of --with-imports")
 	flags.Bool(flagNoCache, false, "bypass the local artifact cache for this run (primary + references); set cache-enabled: false in config to disable it durably")
+	flags.Bool(flagNoVerify, false, "write without verifying the artifact's signature (INSECURE; ADR-0048) — the default verifies and fails closed")
+	flags.String(flagCertIdentity, "", "verify against this exact signer identity instead of the hub-recorded one (bypasses the hub lookup)")
+	flags.String(flagCertOIDCIssuer, "", "expected OIDC issuer for --certificate-identity (default: https://token.actions.githubusercontent.com)")
 
 	// Bind at RunE time, not here — see comment in newPublishCmd.
 	return cmd
@@ -135,6 +155,20 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 		return err
 	}
 
+	// Verify the signature BEFORE writing anything (ADR-0048). Fail closed:
+	// a rejected artifact returns here, so os.MkdirAll/writeBundle never run
+	// and the output directory is not created.
+	switch planUnpackVerify(v.GetString(flagSource), v.GetBool(flagNoVerify)) {
+	case unpackVerify:
+		if err := verifyBeforeUnpack(ctx, v, out); err != nil {
+			return err
+		}
+	case unpackSkipSource:
+		fmt.Fprintln(out, "  ! --source is a local OCI layout with no registry signature to verify; writing WITHOUT verification")
+	case unpackSkipNoVerify:
+		fmt.Fprintln(out, "  ! WARNING: --no-verify set — writing WITHOUT signature verification; the artifact's provenance is NOT checked")
+	}
+
 	if err := os.MkdirAll(output, 0o755); err != nil {
 		return fmt.Errorf("creating output dir: %w", err)
 	}
@@ -148,6 +182,71 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 	if mode, want := referenceMode(v); want {
 		return resolveReferences(ctx, v, mode, unpacked, output, userCreds, out)
 	}
+	return nil
+}
+
+// unpackVerifyPlan is how unpack handles signature verification for one
+// invocation, decided from the flags before any network work (ADR-0048).
+type unpackVerifyPlan int
+
+const (
+	unpackVerify       unpackVerifyPlan = iota // verify before writing; fail closed
+	unpackSkipSource                           // --source: no registry referrer exists to verify against
+	unpackSkipNoVerify                         // --no-verify: caller opted out
+)
+
+// planUnpackVerify decides whether unpack verifies, and if not, why. A local
+// --source layout has no registry signature referrer, so it cannot be verified
+// (this wins even if --no-verify is also set — the reason is just more
+// specific); an explicit --no-verify opts out; otherwise unpack verifies and
+// fails closed on an unsigned/mis-signed artifact.
+func planUnpackVerify(source string, noVerify bool) unpackVerifyPlan {
+	switch {
+	case source != "":
+		return unpackSkipSource
+	case noVerify:
+		return unpackSkipNoVerify
+	default:
+		return unpackVerify
+	}
+}
+
+// verifyBeforeUnpack verifies the artifact's Sigstore signature in-process
+// (the ADR-0046 path) BEFORE any content is written (ADR-0048). It fails closed:
+// an unsigned, mis-signed, or otherwise unverifiable artifact returns an error
+// and unpack writes nothing. It reuses verify's exact policy resolution, so
+// unpack and `grcli verify` apply identical trust — zero-flag against the
+// hub-recorded identity, or an explicit --certificate-identity the caller
+// asserts (bypassing the hub lookup).
+func verifyBeforeUnpack(ctx context.Context, v *viper.Viper, out io.Writer) error {
+	policy, err := resolveVerifyPolicy(ctx, v)
+	if err != nil {
+		return fmt.Errorf("preparing verification: %w", err)
+	}
+	// Mint a pull token for the signature fetch. resolveBundle may have served
+	// the content from cache without minting one, so never assume it's exported.
+	policy.registryToken, err = ensureRegistryToken(ctx, v.GetString(flagURL), "", v.GetString(flagRepository), []string{"pull"})
+	if err != nil {
+		return fmt.Errorf("fetching registry pull token: %w", err)
+	}
+	fmt.Fprintf(out, "verifying signature (%s)\n", policy.modeDescription())
+	verifier, err := newSigstoreVerifier(v)
+	if err != nil {
+		return fmt.Errorf("initializing verifier: %w", err)
+	}
+	bundleJSON, artifactDigest, err := registry.FetchSignatureBundle(ctx, policy.registryHost, policy.repository, policy.version)
+	if err != nil {
+		return fmt.Errorf("discovering signature: %w", err)
+	}
+	res, err := verifier.Verify(ctx, bundleJSON, artifactDigest, policy.identityPolicy())
+	if errors.Is(err, sigverify.ErrUnsigned) {
+		return fmt.Errorf("%s:%s has no signature in the registry — refusing to unpack unverified content "+
+			"(re-run with --no-verify to override; ADR-0048)", policy.repository, policy.version)
+	}
+	if err != nil {
+		return fmt.Errorf("signature verification failed — refusing to unpack: %w", err)
+	}
+	fmt.Fprintf(out, "verified: %s\n", res.Identity)
 	return nil
 }
 

@@ -130,8 +130,11 @@ func TestResolveBundle_CacheHitSkipsNetwork(t *testing.T) {
 	putBundle(c, hostOf(url), "acme", "controls", "1.0.0", seed, io.Discard)
 
 	unpacked := filepath.Join(workdir, "unpacked")
+	// --no-verify: this test isolates the cache layer's offline property. Since
+	// ADR-0048 a default unpack verifies, which DOES contact the hub/registry —
+	// so "cache hit needs no network" now holds only when verification is off.
 	out := runRoot(t, "unpack", "--url", url, "--repository", "acme/controls",
-		"--version", "1.0.0", "--output", unpacked)
+		"--version", "1.0.0", "--no-verify", "--output", unpacked)
 	// The label is the hub coordinate — the SAME label a registry miss prints —
 	// so repeated runs read identically whether served from cache or network.
 	require.Contains(t, out, "unpacked hub.invalid.test/acme/controls:1.0.0")
