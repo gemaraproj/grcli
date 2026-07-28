@@ -90,7 +90,9 @@ grcli validate -f controls.yaml --spec /path/to/gemara
 # Publish — picks up the stored login token; signs by default.
 # --license is REQUIRED (ADR-0037) and takes an SPDX expression; publish
 # fails before any network call without it. Use your catalog's real terms.
-grcli publish -f controls.yaml --license Apache-2.0
+# Locally you must also supply signing material: --cosign-key (below) or
+# --no-sign. Keyless signing is CI-only — see "Signing" further down.
+grcli publish -f controls.yaml --license Apache-2.0 --cosign-key cosign.key
 
 # Verify a published bundle — zero-flag: uses the signer identity the hub
 # recorded at ingest (prints it, and that it came from the hub, before verifying)
@@ -203,10 +205,25 @@ Keys (env form in parentheses):
 > `cache.enabled`, because `$GRCLI_CACHE` would otherwise shadow a nested
 > `cache.*` key.)
 
-Signing is required by default: if `cosign` isn't available, `publish`
-fails *before* pushing, so nothing unsigned reaches the registry. Pass
-`--no-sign` to deliberately opt out. (Signing still shells out to
-`cosign` ≥ 2.4.0 — the prerequisite lives with publishers, not consumers.)
+Signing is required by default, and `publish` fails *before* pushing when it
+can't sign, so nothing unsigned reaches the registry. What counts as signing
+material depends on where you run (`internal/sign.Preflight`):
+
+| Where | Signing material | cosign on `PATH`? |
+|---|---|---|
+| GitHub Actions (`GITHUB_ACTIONS=true`) | the runner's OIDC token — needs `permissions: id-token: write` | **no** — in-process, ADR-0049 |
+| Anywhere else | `--cosign-key` (or `COSIGN_KEY`) | **yes**, ≥ 2.6.0 |
+| Either, opting out | `--no-sign` | no |
+
+So a **local** `publish` with neither a key nor `--no-sign` is refused up
+front — keyless signing is a CI-only path, because it depends on the
+workflow's OIDC identity:
+
+```
+grcli: no signing material — pass --cosign-key (or COSIGN_KEY) for local
+signing, run in GitHub Actions with `permissions: id-token: write` for
+keyless signing, or pass --no-sign to publish without provenance
+```
 
 Keyless `verify` runs **in-process** against Sigstore (ADR-0046): no `cosign`,
 no version-skew caveats, just the `grcli` binary. It embeds the pinned Sigstore
@@ -239,7 +256,7 @@ hub returns 403; *adding a GitHub secret will not fix it.*
 ```yaml
 permissions:
   contents: read
-  id-token: write   # OIDC token: hub auth + cosign keyless signing
+  id-token: write   # OIDC token: hub auth + keyless signing (in-process)
                     # this is the ONLY auth grcli needs in CI
 
 jobs:
@@ -252,16 +269,15 @@ jobs:
       - run: |
           oras pull ghcr.io/revanite-io/grcli:latest --platform linux/amd64
           sudo install grcli /usr/local/bin/grcli
-      - uses: sigstore/cosign-installer@v3
-        with:
-          cosign-release: 'v3.0.6'   # any cosign >= 2.4.0; pin for reproducible CI
+      # No cosign step: grcli signs keyless in-process via sigstore-go
+      # (ADR-0049), using the same OIDC identity that authorizes the push.
       - run: grcli publish -f controls.yaml --license Apache-2.0
         # --license is REQUIRED (ADR-0037) — set it to your catalog's real
         # terms; no `env:` block, no `with: token:`, no secrets — the
         # id-token: write above is what makes this work
 ```
 
-cosign records the workflow URL as the signer identity
+The Fulcio certificate records the workflow URL as the signer identity
 (`https://github.com/<org>/<repo>/.github/workflows/publish.yml@<ref>`).
 The hub verifies that signature at ingest and records the (ref-stripped)
 identity, so a consumer can run `grcli verify --repository … --version …`
