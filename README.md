@@ -111,6 +111,33 @@ grcli cat --repository myorg/my-controls --version 1.0.0 | yq '.metadata.title'
 These default to the public hub at `https://hub.grc.store`; add `--url
 <hub>` for a private deployment.
 
+### Where a publish lands: the `--repository` default
+
+`publish` does not ask you where to publish — **it derives the target from the
+bundle's own metadata**:
+
+```
+<namespace>/<name>  =  slugify(metadata.author.id) / slugify(metadata.id)
+```
+
+`slugify` replaces every run of characters outside `[a-zA-Z0-9._-]` with a
+single `-`, trims leading/trailing `-`, `_`, and `.`, and lowercases the
+result. So a bundle with `author.id: TAG-SC` and `id: cnsc` publishes to
+`tag-sc/cnsc` — regardless of which organization you are a member of.
+
+**This is the usual cause of a 403 on publish.** Authorization is per
+*namespace* (the part before the `/`), so you must own — or hold a trusted
+publisher binding for — the namespace the metadata names, not the one you
+meant. If a bundle inherits `author.id` from an upstream source, the derived
+namespace belongs to that upstream.
+
+Two ways out: change `metadata.author.id` in the bundle, or override the
+target explicitly:
+
+```sh
+grcli publish -f controls.yaml --license Apache-2.0 --repository myorg/my-controls
+```
+
 ### Reading artifacts: `unpack` vs `cat`
 
 `unpack` **verifies the artifact's signature before writing anything** and fails
@@ -204,8 +231,10 @@ trusted-publisher bindings.
 **One-time setup, done on the hub — not in your repo:** an org admin
 adds your repo (`owner/repo`, optionally pinned to a ref) on the hub
 as a Trusted CI publisher for the namespace your bundles publish
-under (the `<author>/<name>` path). Until that binding exists the hub
-returns 403; *adding a GitHub secret will not fix it.*
+under — which is derived from the bundle's own metadata, **not** chosen
+by the workflow (see [Where a publish lands](#where-a-publish-lands-the---repository-default);
+check it before registering the binding). Until that binding exists the
+hub returns 403; *adding a GitHub secret will not fix it.*
 
 ```yaml
 permissions:
