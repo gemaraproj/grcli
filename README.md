@@ -133,12 +133,17 @@ publisher binding for — the namespace the metadata names, not the one you
 meant. If a bundle inherits `author.id` from an upstream source, the derived
 namespace belongs to that upstream.
 
-Two ways out: change `metadata.author.id` in the bundle, or override the
-target explicitly:
+**The fix is to change `metadata.author.id` in the bundle** (or have the
+binding registered for the namespace the metadata actually names).
 
-```sh
-grcli publish -f controls.yaml --license Apache-2.0 --repository myorg/my-controls
-```
+> **`--repository` is not a workaround for a 403.** It overrides only the
+> **OCI push destination** — the hub still indexes the artifact under
+> `slugify(metadata.author.id)`. Pointing it at a namespace that disagrees
+> with the metadata splits the two apart: the blobs land in one repository
+> while the index row is written under another. The publish *appears* to
+> succeed, the artifact does not show up where you aimed it, and re-running
+> fails with a digest conflict. Use `--repository` only when it agrees with
+> what the metadata derives.
 
 ### Reading artifacts: `unpack` vs `cat`
 
