@@ -13,7 +13,7 @@
 # binding the hub returns 403; adding a GitHub secret will not fix it.
 #
 # Copy this into .github/workflows/ in your catalog repo and adjust the
-# file path, the --url, and the trigger to taste.
+# file path, the --license, the --url, and the trigger to taste.
 
 name: Publish catalog
 
@@ -47,5 +47,12 @@ jobs:
       # sigstore-go (ADR-0049), using the same workflow OIDC identity that
       # authorizes the push. (Only `--cosign-key` signing needs cosign on PATH;
       # add a sigstore/cosign-installer step if you use it.)
+      # --license is REQUIRED (ADR-0037): an SPDX expression naming the terms
+      # this catalog is published under. grcli fails before any network call
+      # if it is missing, and the value is stamped into the signed, immutable
+      # artifact — so set it to your catalog's real license, not this default.
       - name: Publish
-        run: grcli publish -f controls.yaml --url https://hub.grc.store
+        run: |
+          grcli publish -f controls.yaml \
+            --license Apache-2.0 \
+            --url https://hub.grc.store

@@ -74,7 +74,7 @@ Run `grcli <command> --help` for the full flag list. The typical flow is
 | --- | --- |
 | `login` | Sign in to a hub via OIDC device flow; stores tokens for `publish`. |
 | `validate` | Check YAML against the Gemara spec via `cue vet`. |
-| `publish` | Pack an artifact + provenance into a signed OCI bundle, push it, and notify the hub. |
+| `publish` | Pack an artifact + provenance into a signed OCI bundle, push it, and notify the hub. Requires `--license` (SPDX expression, ADR-0037). |
 | `verify` | Verify a remote bundle's Sigstore signature (keyless: in-process, no cosign) — with no trust flags, against the signer identity the hub recorded at ingest. |
 | `unpack` | Verify a remote bundle's signature (fail-closed; `--no-verify` to skip) then write its files + manifest to disk. |
 | `cat` | Print an artifact's Gemara content to stdout (no files written) — for piping into `yq`. |
@@ -87,8 +87,10 @@ grcli login
 # Validate against a spec checkout matching your metadata.gemara-version
 grcli validate -f controls.yaml --spec /path/to/gemara
 
-# Publish — picks up the stored login token; signs by default
-grcli publish -f controls.yaml
+# Publish — picks up the stored login token; signs by default.
+# --license is REQUIRED (ADR-0037) and takes an SPDX expression; publish
+# fails before any network call without it. Use your catalog's real terms.
+grcli publish -f controls.yaml --license Apache-2.0
 
 # Verify a published bundle — zero-flag: uses the signer identity the hub
 # recorded at ingest (prints it, and that it came from the hub, before verifying)
@@ -224,9 +226,10 @@ jobs:
       - uses: sigstore/cosign-installer@v3
         with:
           cosign-release: 'v3.0.6'   # any cosign >= 2.4.0; pin for reproducible CI
-      - run: grcli publish -f controls.yaml
-        # no `env:` block, no `with: token:`, no secrets — id-token: write
-        # above is what makes this work
+      - run: grcli publish -f controls.yaml --license Apache-2.0
+        # --license is REQUIRED (ADR-0037) — set it to your catalog's real
+        # terms; no `env:` block, no `with: token:`, no secrets — the
+        # id-token: write above is what makes this work
 ```
 
 cosign records the workflow URL as the signer identity
