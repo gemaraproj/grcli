@@ -238,7 +238,7 @@ private-Sigstore deployment, point `GRCLI_TRUSTED_ROOT` (env, or the
 use the **Sigstore bundle format** (v0.3, attached as an OCI 1.1 referrer);
 artifacts signed by an older grcli (the legacy `.sig` tag format) must be
 re-published to re-sign. Only key-based `verify --cosign-key` still shells out
-to `cosign` ≥ 2.4.0 — a niche publisher-shared-key path.
+to `cosign` ≥ 2.6.0 — a niche publisher-shared-key path.
 
 ## Publishing from GitHub Actions
 
