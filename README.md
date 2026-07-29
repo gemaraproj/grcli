@@ -107,7 +107,7 @@ grcli verify --repository myorg/my-controls --version 1.0.0 \
 grcli unpack --repository myorg/my-controls --version 1.0.0 --output ./unpacked
 
 # Print an artifact's Gemara content to stdout (no files written)
-grcli cat --repository myorg/my-controls --version 1.0.0 | yq '.metadata.title'
+grcli cat --repository myorg/my-controls --version 1.0.0 | yq '.title'
 ```
 
 These default to the public hub at `https://hub.grc.store`; add `--url

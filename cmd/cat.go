@@ -42,7 +42,7 @@ Examples:
 
   # Pipe into yq
   grcli cat --url https://hub.grc.store \
-    --repository myorg/my-controls --version 1.0.0 | yq '.metadata.title'
+    --repository myorg/my-controls --version 1.0.0 | yq '.title'
 
   # From a local 'publish --dry-run' output, one file out of several
   grcli cat --source ./grcli-out --version 1.0.0 --file controls.yaml`,
