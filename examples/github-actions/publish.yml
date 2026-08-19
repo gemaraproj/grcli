@@ -40,13 +40,25 @@ jobs:
       - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
       - name: Install grcli
         run: |
-          oras pull ghcr.io/revanite-io/grcli:v0.1.0 --platform linux/amd64
+          oras pull ghcr.io/revanite-io/grcli:v0.5.0 --platform linux/amd64
           sudo install grcli /usr/local/bin/grcli
 
-      # No cosign step needed: grcli ≥ v0.6.0 signs keyless in-process via
-      # sigstore-go (ADR-0049), using the same workflow OIDC identity that
-      # authorizes the push. (Only `--cosign-key` signing needs cosign on PATH;
-      # add a sigstore/cosign-installer step if you use it.)
+      # REQUIRED at v0.5.0: keyless publish signing shells out to `cosign sign`,
+      # so cosign must be on PATH. It uses the same workflow OIDC identity that
+      # authorizes the push — still no secrets.
+      #
+      # The installer must be v4+: cosign v3 replaced the detached `<binary>.sig`
+      # with a `<binary>.sigstore.json` bundle, and the v3 installer still fetches
+      # `.sig` — a hard 404 for any cosign v3 release.
+      #
+      # A future release drops this step entirely: grcli signs keyless
+      # in-process via sigstore-go (ADR-0049), no external tools. That work is
+      # merged but unreleased pending a live CI smoke, so pin v0.5.0 and keep
+      # cosign until it ships. (`--cosign-key` signing will still need cosign.)
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.2
+
       # --license is REQUIRED (ADR-0037): an SPDX expression naming the terms
       # this catalog is published under. grcli fails before any network call
       # if it is missing, and the value is stamped into the signed, immutable
