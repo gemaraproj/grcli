@@ -40,24 +40,21 @@ jobs:
       - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
       - name: Install grcli
         run: |
-          oras pull ghcr.io/revanite-io/grcli:v0.5.0 --platform linux/amd64
+          oras pull ghcr.io/gemaraproj/grcli:v0.6.0 --platform linux/amd64
           sudo install grcli /usr/local/bin/grcli
 
-      # REQUIRED at v0.5.0: keyless publish signing shells out to `cosign sign`,
-      # so cosign must be on PATH. It uses the same workflow OIDC identity that
-      # authorizes the push — still no secrets.
+      # NO cosign step, and that is the point. As of v0.6.0 keyless publish
+      # signing runs IN-PROCESS via sigstore-go (ADR-0049): grcli requests the
+      # Actions OIDC token itself, gets a Fulcio certificate, logs to Rekor and
+      # attaches the signature as an OCI referrer — no external tools, no
+      # secrets. Verified by a live CI smoke on 2026-08-19 from a runner with
+      # no cosign on PATH. cosign is still needed ONLY for the `--cosign-key`
+      # (key-based) path, which this example does not use.
       #
-      # The installer must be v4+: cosign v3 replaced the detached `<binary>.sig`
-      # with a `<binary>.sigstore.json` bundle, and the v3 installer still fetches
-      # `.sig` — a hard 404 for any cosign v3 release.
-      #
-      # A future release drops this step entirely: grcli signs keyless
-      # in-process via sigstore-go (ADR-0049), no external tools. That work is
-      # merged but unreleased pending a live CI smoke, so pin v0.5.0 and keep
-      # cosign until it ships. (`--cosign-key` signing will still need cosign.)
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-        with:
-          cosign-release: v3.1.2
+      # Pin a tag, never `:latest`. v0.5.1 shipped a broken signing path and
+      # anything tracking `:latest` inherited it; the publishers that pinned
+      # were unaffected. Note the org move: v0.6.0+ live at
+      # ghcr.io/gemaraproj/grcli, tags <= v0.5.1 at ghcr.io/revanite-io/grcli.
 
       # --license is REQUIRED (ADR-0037): an SPDX expression naming the terms
       # this catalog is published under. grcli fails before any network call

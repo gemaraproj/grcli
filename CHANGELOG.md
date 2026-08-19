@@ -5,11 +5,20 @@ change bumps the minor version.
 
 ## [Unreleased]
 
-> **Not yet releasable.** The change below needs a live CI smoke (a keyless
-> publish from a runner with **no cosign installed**, then a zero-flag verify)
-> before it is tagged — the Fulcio/Rekor/GitHub-OIDC path cannot be exercised
-> offline. When that passes it becomes the next minor (v0.6.0). Tag v0.5.0 from
-> the commit *before* the in-process-signing work so it can ship independently.
+## [0.6.0] - 2026-08-19
+
+> **Live CI smoke PASSED 2026-08-19** — the gate this release was held behind.
+> A real keyless publish ran from a runner with **no cosign installed**
+> (`eddie-knight/security-baseline` → preview hub), and the zero-flag verify
+> resolved the signature against the hub-recorded signer identity
+> `keyless:…#https://github.com/eddie-knight/security-baseline/.github/workflows/publish.yaml`.
+> That exercised the Fulcio, Rekor and GitHub-OIDC legs end to end for the
+> first time — none of which can be reached offline.
+>
+> **The repo also moved orgs after v0.5.1**: v0.6.0+ publish to
+> `ghcr.io/gemaraproj/grcli`; tags ≤ v0.5.1 remain at
+> `ghcr.io/revanite-io/grcli` and are not re-published. The Go module path is
+> deliberately unchanged (`github.com/revanite-io/grcli`).
 
 ### Changed
 
