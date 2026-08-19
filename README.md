@@ -8,13 +8,13 @@ publishes it to a registry, and verifies bundles you fetch back.
 ## Install or Upgrade
 
 Binaries are published as a public, signed, multi-platform OCI artifact
-at `ghcr.io/revanite-io/grcli` (linux, macOS, and Windows on amd64 and
+at `ghcr.io/gemaraproj/grcli` (linux, macOS, and Windows on amd64 and
 arm64). Pulling needs no token. You need [`oras`](https://oras.land) ≥
 1.3 on `PATH`.
 
 ```sh
 # platforms: linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
-oras pull ghcr.io/revanite-io/grcli:latest --platform darwin/arm64
+oras pull ghcr.io/gemaraproj/grcli:latest --platform darwin/arm64
 chmod +x grcli && sudo mv grcli /usr/local/bin/
 ```
 
@@ -24,17 +24,17 @@ In GitHub Actions:
 # v2: https://github.com/oras-project/setup-oras/releases/tag/v2.0.0
 - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
 - run: |
-    oras pull ghcr.io/revanite-io/grcli:latest --platform linux/amd64
+    oras pull ghcr.io/gemaraproj/grcli:latest --platform linux/amd64
     sudo install grcli /usr/local/bin/grcli
 ```
 
-Pin a release tag (`:v0.1.0`) instead of `latest` for reproducible
+Pin a release tag (`:v0.6.0`) instead of `latest` for reproducible
 installs. To verify the signature before installing:
 
 ```sh
-cosign verify ghcr.io/revanite-io/grcli:latest \
+cosign verify ghcr.io/gemaraproj/grcli:latest \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp '^https://github.com/revanite-io/grcli/.github/workflows/release.yml@'
+  --certificate-identity-regexp '^https://github.com/gemaraproj/grcli/.github/workflows/release.yml@'
 ```
 
 ## Prerequisites
@@ -272,7 +272,7 @@ jobs:
       # v2: https://github.com/oras-project/setup-oras/releases/tag/v2.0.0
       - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
       - run: |
-          oras pull ghcr.io/revanite-io/grcli:latest --platform linux/amd64
+          oras pull ghcr.io/gemaraproj/grcli:latest --platform linux/amd64
           sudo install grcli /usr/local/bin/grcli
       # No cosign step: grcli signs keyless in-process via sigstore-go
       # (ADR-0049), using the same OIDC identity that authorizes the push.

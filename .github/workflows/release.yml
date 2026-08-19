@@ -24,7 +24,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE: ghcr.io/${{ github.repository }}   # ghcr.io/revanite-io/grcli
+  IMAGE: ghcr.io/${{ github.repository }}   # ghcr.io/gemaraproj/grcli (repo moved orgs after v0.5.1)
 
 jobs:
   release:
