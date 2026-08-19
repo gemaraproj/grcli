@@ -200,11 +200,9 @@ const maxSignatureBlobBytes = limits.MaxPluginBlobBytes
 // AttachSignatureReferrer pushes a Sigstore signature bundle to the registry as
 // an OCI 1.1 referrer of the artifact manifest identified by subjectDigest —
 // the step `cosign sign` used to perform. It is the in-process publish half of
-// ADR-0049 (grcli signs keyless without cosign). The referrer's artifactType is
-// mediatype.CosignSignReferrer, and its single layer carries the bundle JSON
-// under mediatype.SigstoreBundle — the exact pair FetchSignatureBundle /
-// ociref (hub) discover. Auth flows through the same credential chain as the
-// bundle push: the GRCLI_REGISTRY_TOKEN the publish flow minted and exported.
+// ADR-0049 (grcli signs keyless without cosign). Auth flows through the same
+// credential chain as the bundle push: the GRCLI_REGISTRY_TOKEN the publish
+// flow minted and exported.
 func AttachSignatureReferrer(ctx context.Context, registryHost, repository, subjectDigest string, bundleJSON []byte) error {
 	if subjectDigest == "" {
 		return errors.New("subject digest is required")
@@ -223,16 +221,36 @@ func AttachSignatureReferrer(ctx context.Context, registryHost, repository, subj
 	if err != nil {
 		return fmt.Errorf("resolving subject %s: %w", subjectDigest, err)
 	}
-	// Push the bundle blob, then the referrer manifest that carries it.
+	return packSignatureReferrer(ctx, repo, subject, bundleJSON)
+}
+
+// packSignatureReferrer is the target-agnostic half of AttachSignatureReferrer
+// (split out so it is unit-testable against an in-memory oras store, mirroring
+// discoverSignatureBundle on the read side). It pushes the bundle blob, then an
+// OCI 1.1 referrer manifest of subject carrying it as the single layer.
+//
+// The referrer's artifactType is mediatype.SigstoreBundle, matching what the
+// bundle-by-default signer line stamps (cosign 3.x, pvtr's plugin packer — see
+// the RULE in grc-store-protocol/mediatype): grcli's in-process signer emits a
+// v0.3 bundle, so that is the semantically correct stamp. It is also the
+// maximally compatible one — hubs predating the both-types ingest fix accepted
+// SigstoreBundle only.
+//
+// mediatype.CosignSignReferrer must NOT be used here: it is a URL, not an
+// RFC 6838 media type, and oras.PackManifest rejects it as an artifactType
+// before any network I/O ("invalid artifactType format"). Discovery still
+// ACCEPTS it (see discoverSignatureBundle) — cosign 2.6.x stamps real
+// signatures with it; only this write site is constrained.
+func packSignatureReferrer(ctx context.Context, target oras.Target, subject ocispec.Descriptor, bundleJSON []byte) error {
 	bundleDesc := ocispec.Descriptor{
 		MediaType: mediatype.SigstoreBundle,
 		Digest:    godigest.FromBytes(bundleJSON),
 		Size:      int64(len(bundleJSON)),
 	}
-	if err := repo.Push(ctx, bundleDesc, bytes.NewReader(bundleJSON)); err != nil {
+	if err := target.Push(ctx, bundleDesc, bytes.NewReader(bundleJSON)); err != nil {
 		return fmt.Errorf("pushing signature bundle blob: %w", err)
 	}
-	if _, err := oras.PackManifest(ctx, repo, oras.PackManifestVersion1_1, mediatype.CosignSignReferrer, oras.PackManifestOptions{
+	if _, err := oras.PackManifest(ctx, target, oras.PackManifestVersion1_1, mediatype.SigstoreBundle, oras.PackManifestOptions{
 		Subject: &subject,
 		Layers:  []ocispec.Descriptor{bundleDesc},
 	}); err != nil {

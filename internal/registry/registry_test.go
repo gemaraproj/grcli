@@ -13,6 +13,7 @@ import (
 	"github.com/revanite-io/grc-store-protocol/mediatype"
 	"github.com/stretchr/testify/require"
 	"oras.land/oras-go/v2/content/memory"
+	"oras.land/oras-go/v2/registry"
 
 	"github.com/revanite-io/grcli/internal/digest"
 )
@@ -67,6 +68,33 @@ func attachSignature(t *testing.T, store *memory.Store, subject ocispec.Descript
 		Layers:       []ocispec.Descriptor{layer},
 		Subject:      &subjCopy,
 	})
+}
+
+// TestPackSignatureReferrer_StampsSigstoreBundle exercises the real pack/attach
+// path. It is the regression guard for the v0.5.1 keyless-publish failure: the
+// referrer was packed with artifactType mediatype.CosignSignReferrer, which is
+// a URL rather than an RFC 6838 media type, so oras.PackManifest rejected it
+// ("invalid artifactType format") before any network I/O — deterministically,
+// on every keyless publish (eddie-knight/gemara-asset-mirror @ 2ee9a5e,
+// 2026-08-19). Asserting the stamp is SigstoreBundle also pins the write side
+// to the type every hub generation accepts at ingest.
+func TestPackSignatureReferrer_StampsSigstoreBundle(t *testing.T) {
+	store := memory.New()
+	subject := subjectManifest(t, store)
+	want := []byte(`{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json","the":"bundle"}`)
+
+	require.NoError(t, packSignatureReferrer(context.Background(), store, subject, want))
+
+	refs, err := registry.Referrers(context.Background(), store, subject, "")
+	require.NoError(t, err)
+	require.Len(t, refs, 1)
+	require.Equal(t, mediatype.SigstoreBundle, refs[0].ArtifactType)
+
+	// Round-trip: what we attach is what our own discovery (and the hub's
+	// ociref, which accepts the same pair) reads back.
+	got, err := discoverSignatureBundle(context.Background(), store, subject)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
 }
 
 func TestDiscoverSignatureBundle_FindsCosignReferrer(t *testing.T) {

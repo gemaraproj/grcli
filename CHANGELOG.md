@@ -26,6 +26,21 @@ change bumps the minor version.
   `verify --cosign-key`. Air-gapped/private-Sigstore signing: point
   `GRCLI_FULCIO_URL` / `GRCLI_REKOR_URL` at your instance.
 
+### Fixed
+
+- **In-process keyless signing could not attach its signature referrer at all.**
+  The referrer manifest was packed with artifactType
+  `https://sigstore.dev/cosign/sign/v1` — a URL, not an RFC 6838 media type — so
+  `oras.PackManifest` refused it before any network I/O and every keyless
+  publish died with `invalid artifactType format: … : invalid media type`. The
+  referrer is now stamped `application/vnd.dev.sigstore.bundle.v0.3+json`, which
+  is both the semantically correct type (grcli's signer emits a v0.3 bundle, so
+  it follows the bundle-by-default signer line) and the maximally compatible one
+  (hubs predating the both-types ingest fix accepted only that stamp). Signature
+  *discovery* is unchanged and still accepts both stamp variants — cosign 2.6.x
+  legitimately signs with the URL form; only the write side was ever broken.
+  (Found by the first real keyless CI publish, 2026-08-19.)
+
 ## [0.5.0] - 2026-07-10
 
 ### Changed
