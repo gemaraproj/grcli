@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Revanite-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 // Package registry packs a Gemara bundle and writes it to an OCI target.
 // The same Pack call services both the live-push path (remote.Repository)

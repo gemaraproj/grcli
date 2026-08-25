@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Revanite-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 // Package provenance produces a SLSA v1.0-shaped JSON predicate that is
 // embedded as the "provenance" key of the OCI bundle's manifest

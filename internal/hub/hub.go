@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Revanite-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 // Package hub calls the grc.store backend's POST /v1/bundles/sync
 // endpoint so the hub indexes a bundle that grcli has already pushed

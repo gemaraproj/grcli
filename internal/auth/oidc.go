@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Revanite-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 // Package auth implements the interactive OIDC login flow for grcli —
 // OAuth 2.0 Device Authorization Grant (RFC 8628) against a Keycloak

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Revanite-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 // Package digest computes sha256 digests over bytes or files and returns
 // them in the "sha256:<hex>" format used throughout grcli's manifests,
