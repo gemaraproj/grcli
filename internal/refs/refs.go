@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Revanite-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 // Package refs parses the mapping references out of a Gemara artifact body
 // and decides which of them grcli unpack should resolve against a hub

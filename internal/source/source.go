@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Revanite-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 // Package source loads grcli input files, verifies they describe a single
 // artifact, and emits the merged YAML body that goes into the bundle.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Revanite-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 // Package cmd wires the grcli cobra/viper CLI.
 package cmd

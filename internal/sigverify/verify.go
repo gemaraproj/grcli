@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Revanite-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 // Package sigverify is grcli's in-process Sigstore keyless-verification
 // substrate (ADR-0046). It is a MIRROR of the hub's internal/sigverify

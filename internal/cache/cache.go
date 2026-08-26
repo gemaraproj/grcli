@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Revanite-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 // Package cache is a Go-module-style on-disk cache for artifacts grcli pulls
 // (ADR-0039, extended by ADR-0042). grc.store tags are immutable (ADR-0033),

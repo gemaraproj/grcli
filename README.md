@@ -294,4 +294,4 @@ issuer `https://token.actions.githubusercontent.com` themselves.
 
 ## License
 
-Source-available, not open-source.
+Licensed under the [Apache License, Version 2.0](LICENSE).
