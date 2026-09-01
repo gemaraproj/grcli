@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/revanite-io/grcli/internal/auth"
+	"github.com/gemaraproj/grc-store-clientkit/auth"
 	"github.com/revanite-io/grcli/internal/hub"
 )
 
@@ -77,7 +77,7 @@ func runLogin(cmd *cobra.Command, v *viper.Viper) error {
 		return err
 	}
 
-	store, err := auth.NewDefaultStore()
+	store, err := auth.NewDefaultStore(grcliApp)
 	if err != nil {
 		return err
 	}

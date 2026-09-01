@@ -25,7 +25,6 @@ package sigverify
 import (
 	"context"
 	"crypto/sha256"
-	_ "embed"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -33,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gemaraproj/grc-store-clientkit/trustroot"
 	"github.com/revanite-io/grc-store-protocol/identity"
 	"github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/root"
@@ -57,14 +57,14 @@ type Result struct {
 var ErrUnsigned = errors.New("artifact is not signed")
 
 // embeddedTrustedRoot is the pinned public-good Sigstore trust root — the SAME
-// file the hub pins (ADR-0034 decision 7). Pinning it, rather than fetching live
-// via TUF, keeps verify fully offline and deterministic and adds no network
-// failure mode to every verify. OPERATIONAL OBLIGATION: refresh this file on
-// each grcli release (the Fulcio/Rekor/CT material has validity windows). An
-// override for air-gapped / private-Sigstore deployments is NewVerifierFromFile.
-//
-//go:embed trusted_root.json
-var embeddedTrustedRoot []byte
+// material the hub pins (ADR-0034 decision 7), which is exactly why it is no
+// longer vendored here: grcli, privateer-sdk and the hub each carried a
+// byte-identical copy, so rotation was three edits and three chances to miss
+// one. It now comes from grc-store-clientkit, and refreshing it is one release
+// of that module. Pinning (rather than fetching live via TUF) still keeps
+// verify offline and deterministic, adding no network failure mode. An override
+// for air-gapped / private-Sigstore deployments is NewVerifierFromFile.
+var embeddedTrustedRoot = trustroot.Bytes()
 
 // defaultVerifyTimeout bounds the (offline, CPU-only) verification. Defense in
 // depth: the work is local crypto, but a malformed bundle should never hang.

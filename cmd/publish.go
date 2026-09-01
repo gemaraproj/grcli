@@ -18,7 +18,7 @@ import (
 
 	"github.com/revanite-io/grc-store-protocol/spdx"
 
-	"github.com/revanite-io/grcli/internal/auth"
+	"github.com/gemaraproj/grc-store-clientkit/auth"
 	"github.com/revanite-io/grcli/internal/digest"
 	"github.com/revanite-io/grcli/internal/hub"
 	"github.com/revanite-io/grcli/internal/provenance"
@@ -430,6 +430,7 @@ func authenticatePush(ctx context.Context, v *viper.Viper, repository string) er
 // same "run grcli login" hint a caller would already need.
 func resolveBearerToken(ctx context.Context, v *viper.Viper) (string, error) {
 	in := auth.ResolveInput{
+		App:           grcliApp,
 		ExplicitToken: v.GetString(flagToken),
 		Warn:          os.Stderr,
 	}
@@ -455,7 +456,7 @@ func resolveBearerToken(ctx context.Context, v *viper.Viper) (string, error) {
 			in.ClientID = d.OIDCCLIClientID
 		}
 	}
-	if store, err := auth.NewDefaultStore(); err == nil {
+	if store, err := auth.NewDefaultStore(grcliApp); err == nil {
 		in.Store = store
 	}
 	return auth.Resolve(ctx, in)

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gemaraproj/grc-store-clientkit/auth"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -79,6 +80,15 @@ const flagCacheEnabled = "cache-enabled"
 // <file> selects a single file and bypasses the search. A missing file is not
 // an error; any other read error is a warning (on the command's stderr) so the
 // command still runs on env + flags.
+// grcliApp identifies this CLI to grc-store-clientkit: it picks the credential
+// file under ${XDG_DATA_HOME:-~/.local/share}/grcli and names grcli (not pvtr,
+// the other consumer of that module) in every "run `grcli login`" hint.
+//
+// GRCLI_TOKEN is named here for those messages; viper's GRCLI env prefix
+// already merges the variable into the --token flag, so it reaches Resolve as
+// an explicit token before the module's own environment lookup runs.
+var grcliApp = auth.App{Name: "grcli", TokenEnv: "GRCLI_TOKEN"}
+
 func loadConfig(v *viper.Viper, cfgFile string, warn io.Writer) error {
 	v.SetConfigType("yaml")
 	v.SetEnvPrefix("GRCLI")
