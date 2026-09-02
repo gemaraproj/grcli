@@ -87,7 +87,10 @@ const flagCacheEnabled = "cache-enabled"
 // GRCLI_TOKEN is named here for those messages; viper's GRCLI env prefix
 // already merges the variable into the --token flag, so it reaches Resolve as
 // an explicit token before the module's own environment lookup runs.
-var grcliApp = auth.App{Name: "grcli", TokenEnv: "GRCLI_TOKEN"}
+// TokenFlag is set because grcli registers --token (see publish.go): from
+// clientkit v0.1.1 the flag is named in no-token errors only when the tool
+// declares it, so omitting this would drop a fix the user can actually apply.
+var grcliApp = auth.App{Name: "grcli", TokenEnv: "GRCLI_TOKEN", TokenFlag: "--token"}
 
 func loadConfig(v *viper.Viper, cfgFile string, warn io.Writer) error {
 	v.SetConfigType("yaml")

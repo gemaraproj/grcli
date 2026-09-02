@@ -27,7 +27,7 @@ require (
 	github.com/digitorus/pkcs7 v0.0.0-20230818184609-3a137a874352 // indirect
 	github.com/digitorus/timestamp v0.0.0-20231217203849-220c5c2851b7 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
-	github.com/gemaraproj/grc-store-clientkit v0.1.0
+	github.com/gemaraproj/grc-store-clientkit v0.1.1
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -111,9 +111,3 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 )
-
-// TEMPORARY — remove once grc-store-clientkit is tagged and pushed.
-// A relative replace makes this module unbuildable outside this workspace:
-// CI cloning grcli alone, and `go install github.com/revanite-io/grcli@latest`,
-// both fail until the require above resolves from the real remote.
-replace github.com/gemaraproj/grc-store-clientkit => ../grc-store-clientkit

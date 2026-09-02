@@ -100,6 +100,8 @@ github.com/fsnotify/fsnotify v1.9.0 h1:2Ml+OJNzbYCTzsxtv8vKSFD9PbJjmhYF14k/jKC7S
 github.com/fsnotify/fsnotify v1.9.0/go.mod h1:8jBTzvmWwFyi3Pb8djgCCO5IBqzKJ/Jwo8TRcHyHii0=
 github.com/gemaraproj/go-gemara v0.5.0 h1:sKDj3R7fX8tdlksShWGCLUl/sLvo+tGh1xAFs1JaoHU=
 github.com/gemaraproj/go-gemara v0.5.0/go.mod h1:knXQmQ4f7vB18eb6TcUCP2A3dqQpn+oZdyz74Qe1+ac=
+github.com/gemaraproj/grc-store-clientkit v0.1.1 h1:q15grTze27tMbOlXaT1UAvrAhDbVPir/4C36Sq/zLus=
+github.com/gemaraproj/grc-store-clientkit v0.1.1/go.mod h1:6gJ5iUOGONQ7PNKAhw+gOkkE8qBo0yatuc8uEMorpsk=
 github.com/go-chi/chi/v5 v5.3.0 h1:halUjDxhshgXHMrao5bB8eNBXo/rnzwr8m5m36glehM=
 github.com/go-chi/chi/v5 v5.3.0/go.mod h1:R+tYY2hNuVUUjxoPtqUdgBqevM9s9njzkTLutVsOCto=
 github.com/go-jose/go-jose/v4 v4.1.4 h1:moDMcTHmvE6Groj34emNPLs/qtYXRVcd6S7NHbHz3kA=

@@ -6,8 +6,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/gemaraproj/grc-store-clientkit/auth"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 
@@ -258,4 +260,17 @@ func TestResolveBearerToken(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "explicit-tok", got)
 	})
+}
+
+// grcli registers --token, so a no-token error must name it. From
+// grc-store-clientkit v0.1.1 the flag is listed only when App.TokenFlag is set,
+// and dropping it would silently hide a fix the user can apply.
+func TestGrcliApp_NoTokenErrorNamesTheFlag(t *testing.T) {
+	err := &auth.ErrNoToken{App: grcliApp, Issuer: "https://issuer", CheckedStore: true}
+	msg := err.Error()
+	for _, want := range []string{"--token", "GRCLI_TOKEN", "grcli login"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("no-token error should name %q, got: %s", want, msg)
+		}
+	}
 }
