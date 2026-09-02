@@ -70,16 +70,6 @@ func newRootCmd() *cobra.Command {
 // whenever $GRCLI_CACHE is set. The env form is GRCLI_CACHE_ENABLED.
 const flagCacheEnabled = "cache-enabled"
 
-// loadConfig wires the GRCLI_* env prefix and reads the single user-global
-// config file (ADR-0043, amended by ADR-0044). Precedence, highest first:
-// explicit flag > GRCLI_* env > user-global $XDG_CONFIG_HOME/grcli/config.yaml
-// (fallback ~/.config/grcli/config.yaml) > built-in default. There is NO
-// per-project layer: a repo-local ./.grcli.yaml is deliberately not read
-// (ADR-0044) — a committed config file steering a publish/verify tool is a
-// footgun — so a present one earns a migration warning instead. --config
-// <file> selects a single file and bypasses the search. A missing file is not
-// an error; any other read error is a warning (on the command's stderr) so the
-// command still runs on env + flags.
 // grcliApp identifies this CLI to grc-store-clientkit: it picks the credential
 // file under ${XDG_DATA_HOME:-~/.local/share}/grcli and names grcli (not pvtr,
 // the other consumer of that module) in every "run `grcli login`" hint.
@@ -92,6 +82,16 @@ const flagCacheEnabled = "cache-enabled"
 // declares it, so omitting this would drop a fix the user can actually apply.
 var grcliApp = auth.App{Name: "grcli", TokenEnv: "GRCLI_TOKEN", TokenFlag: "--token"}
 
+// loadConfig wires the GRCLI_* env prefix and reads the single user-global
+// config file (ADR-0043, amended by ADR-0044). Precedence, highest first:
+// explicit flag > GRCLI_* env > user-global $XDG_CONFIG_HOME/grcli/config.yaml
+// (fallback ~/.config/grcli/config.yaml) > built-in default. There is NO
+// per-project layer: a repo-local ./.grcli.yaml is deliberately not read
+// (ADR-0044) — a committed config file steering a publish/verify tool is a
+// footgun — so a present one earns a migration warning instead. --config
+// <file> selects a single file and bypasses the search. A missing file is not
+// an error; any other read error is a warning (on the command's stderr) so the
+// command still runs on env + flags.
 func loadConfig(v *viper.Viper, cfgFile string, warn io.Writer) error {
 	v.SetConfigType("yaml")
 	v.SetEnvPrefix("GRCLI")
