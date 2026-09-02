@@ -3,8 +3,6 @@
 Notable changes to `grcli`. This project is pre-1.0; while on `v0.x`, a breaking
 change bumps the minor version.
 
-## [Unreleased]
-
 ## [0.6.0] - 2026-08-19
 
 > **Live CI smoke PASSED 2026-08-19** — the gate this release was held behind.
