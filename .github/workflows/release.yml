@@ -49,7 +49,8 @@ jobs:
       - name: Log in to GHCR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GH_TOKEN" | oras login "$REGISTRY" -u "${{ github.actor }}" --password-stdin
+          ACTOR: ${{ github.actor }}
+        run: echo "$GH_TOKEN" | oras login "$REGISTRY" -u "$ACTOR" --password-stdin
 
       - name: Build binaries, push per-platform artifacts, assemble index
         id: build

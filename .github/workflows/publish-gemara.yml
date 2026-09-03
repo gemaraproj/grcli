@@ -69,8 +69,10 @@ jobs:
       # needs no token. v2: https://github.com/oras-project/setup-oras/releases/tag/v2.0.0
       - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
       - name: Install grcli ${{ inputs.grcli-version }}
+        env:
+          GRCLI_VERSION: ${{ inputs.grcli-version }}
         run: |
-          oras pull ghcr.io/revanite-io/grcli:${{ inputs.grcli-version }} --platform linux/amd64
+          oras pull "ghcr.io/revanite-io/grcli:$GRCLI_VERSION" --platform linux/amd64
           sudo install grcli /usr/local/bin/grcli
 
       # Required for keyless signing — the same OIDC identity authorizes the push.
