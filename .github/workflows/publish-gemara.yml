@@ -63,7 +63,9 @@ jobs:
       contents: read
       id-token: write            # hub auth + cosign keyless signing (no secret)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       # grcli ships as a public, signed, multi-platform OCI artifact; pulling
       # needs no token. v2: https://github.com/oras-project/setup-oras/releases/tag/v2.0.0
@@ -77,7 +79,7 @@ jobs:
 
       # Required for keyless signing — the same OIDC identity authorizes the push.
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
 
       - name: Publish
         env:
