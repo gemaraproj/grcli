@@ -171,32 +171,6 @@ func NormalizeRegistryHost(in string) string {
 // grcli and the hub agree on what "too big to be a signature" means.
 const maxSignatureBlobBytes = limits.MaxPluginBlobBytes
 
-// FetchSignatureBundle resolves <registry>/<repository>:<tag> to its manifest
-// and returns the raw Sigstore bundle bytes attached as an OCI referrer, plus
-// the manifest digest the signature is bound to (the value the verifier's
-// artifact-digest policy checks). It returns (nil, digest, nil) when no
-// signature referrer is present — a nil bundle is the caller's ErrUnsigned
-// signal, NOT an error; an error is reserved for a genuine transport/parse
-// failure so the caller can fail closed (we cannot claim "unsigned" if we could
-// not look).
-//
-// Discovery accepts BOTH referrer artifactTypes a cosign-signed catalog can
-// carry, because the stamped type is a function of the SIGNER's cosign major
-// version (field-confirmed against a live zot 2026-07-07):
-//
-//	cosign 2.6.x `sign --new-bundle-format` → mediatype.CosignSignReferrer
-//	cosign 3.x   `sign` (bundle by default) → mediatype.SigstoreBundle
-//
-// The bundle BLOB inside is the identical v0.3 bundle either way. Publishers
-// control their own cosign version, so filtering on a single type silently
-// treats the other cohort's signed catalogs as unsigned (the earlier
-// CosignSignReferrer-only filter did exactly that for cosign-3.x publishes).
-// This supersedes grc-store-protocol/mediatype's "RULE — do not cross these",
-// whose premise predates cosign 3.x.
-//
-// Auth flows through the same credential chain as UnpackRemote (the
-// GRCLI_REGISTRY_TOKEN the caller minted via ensureRegistryToken is read by
-// dockerCredentials), so no token needs threading through this signature.
 // AttachSignatureReferrer pushes a Sigstore signature bundle to the registry as
 // an OCI 1.1 referrer of the artifact manifest identified by subjectDigest —
 // the step `cosign sign` used to perform. It is the in-process publish half
@@ -259,6 +233,32 @@ func packSignatureReferrer(ctx context.Context, target oras.Target, subject ocis
 	return nil
 }
 
+// FetchSignatureBundle resolves <registry>/<repository>:<tag> to its manifest
+// and returns the raw Sigstore bundle bytes attached as an OCI referrer, plus
+// the manifest digest the signature is bound to (the value the verifier's
+// artifact-digest policy checks). It returns (nil, digest, nil) when no
+// signature referrer is present — a nil bundle is the caller's ErrUnsigned
+// signal, NOT an error; an error is reserved for a genuine transport/parse
+// failure so the caller can fail closed (we cannot claim "unsigned" if we could
+// not look).
+//
+// Discovery accepts BOTH referrer artifactTypes a cosign-signed catalog can
+// carry, because the stamped type is a function of the SIGNER's cosign major
+// version (field-confirmed against a live zot 2026-07-07):
+//
+//	cosign 2.6.x `sign --new-bundle-format` → mediatype.CosignSignReferrer
+//	cosign 3.x   `sign` (bundle by default) → mediatype.SigstoreBundle
+//
+// The bundle BLOB inside is the identical v0.3 bundle either way. Publishers
+// control their own cosign version, so filtering on a single type silently
+// treats the other cohort's signed catalogs as unsigned (the earlier
+// CosignSignReferrer-only filter did exactly that for cosign-3.x publishes).
+// This supersedes grc-store-protocol/mediatype's "RULE — do not cross these",
+// whose premise predates cosign 3.x.
+//
+// Auth flows through the same credential chain as UnpackRemote (the
+// GRCLI_REGISTRY_TOKEN the caller minted via ensureRegistryToken is read by
+// dockerCredentials), so no token needs threading through this signature.
 func FetchSignatureBundle(ctx context.Context, registryHost, repository, tag string) (bundleJSON []byte, artifactDigest string, err error) {
 	if tag == "" {
 		return nil, "", errors.New("tag is required")

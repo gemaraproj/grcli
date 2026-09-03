@@ -19,8 +19,6 @@
 package cache
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +26,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/gemaraproj/grcli/internal/digest"
 )
 
 // layoutVersion namespaces the on-disk layout so a format change can coexist
@@ -223,10 +223,7 @@ func (c *Cache) Put(host, namespace, id, version string, e Entry) error {
 // content that bypasses the cache (e.g. under --no-cache).
 func Digest(b []byte) string { return digestOf(b) }
 
-func digestOf(b []byte) string {
-	sum := sha256.Sum256(b)
-	return "sha256:" + hex.EncodeToString(sum[:])
-}
+func digestOf(b []byte) string { return digest.Bytes(b) }
 
 // sanitize reduces a coordinate component to a safe single path segment:
 // path separators and parent-dir tokens can't survive, so the join stays

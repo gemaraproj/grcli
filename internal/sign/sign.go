@@ -4,7 +4,8 @@
 //
 // Keyless signing (the CI trusted-publishing path) runs IN-PROCESS via
 // sigstore-go — the same library internal/sigverify uses to verify — so
-// publishing needs no cosign (symmetric to the in-process verify). See keyless.go. Key-based signing (--cosign-key) still shells out to
+// publishing needs no cosign (symmetric to the in-process verify). See
+// keyless.go. Key-based signing (--cosign-key) still shells out to
 // cosign, the one remaining path that needs it on PATH.
 package sign
 

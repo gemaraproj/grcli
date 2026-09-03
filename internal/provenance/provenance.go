@@ -9,6 +9,7 @@ package provenance
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -211,9 +212,22 @@ func detectGit() *ResourceDescr {
 	}
 	return &ResourceDescr{
 		Name:   "source",
-		URI:    "git+" + strings.TrimSuffix(remote, ".git") + "@" + sha,
+		URI:    "git+" + strings.TrimSuffix(stripUserinfo(remote), ".git") + "@" + sha,
 		Digest: map[string]string{"gitCommit": sha},
 	}
+}
+
+// stripUserinfo drops credentials embedded in a remote URL
+// (https://user:token@host/…) so they never land in signed, immutable
+// provenance. scp-style remotes (git@host:path) have no userinfo and pass
+// through unchanged.
+func stripUserinfo(remote string) string {
+	u, err := url.Parse(remote)
+	if err != nil || u.Scheme == "" || u.User == nil {
+		return remote
+	}
+	u.User = nil
+	return u.String()
 }
 
 func gitCmd(args ...string) (string, error) {

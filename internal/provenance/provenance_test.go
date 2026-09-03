@@ -78,3 +78,18 @@ func TestBuild_SerializesAsValidJSON(t *testing.T) {
 	require.Contains(t, string(b), `"buildType"`)
 	require.Contains(t, string(b), `"resolvedDependencies"`)
 }
+
+func TestStripUserinfo(t *testing.T) {
+	cases := map[string]string{
+		"https://user:tok3n@github.com/org/repo.git":         "https://github.com/org/repo.git",
+		"https://x-access-token:ghs_abc@github.com/org/repo": "https://github.com/org/repo",
+		"https://github.com/org/repo.git":                    "https://github.com/org/repo.git",
+		"git@github.com:org/repo.git":                        "git@github.com:org/repo.git",
+		"ssh://git@github.com/org/repo.git":                  "ssh://github.com/org/repo.git",
+	}
+	for in, want := range cases {
+		if got := stripUserinfo(in); got != want {
+			t.Errorf("stripUserinfo(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
