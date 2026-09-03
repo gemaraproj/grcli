@@ -3,12 +3,8 @@ name: release
 # Publish grcli as a public, multi-platform OCI artifact on GHCR, signed
 # keyless with cosign. Triggered by pushing a semver tag (e.g. v0.1.0).
 #
-# The source repo stays private; the published *package* is public (GHCR
-# package visibility is independent of repo visibility). Make it public
-# once, after the first run: GitHub -> repo -> Packages -> grcli ->
-# Package settings -> Change visibility -> Public. After that, anyone can
-# `oras pull` the binary with no token. See README "Install a pre-built
-# binary".
+# The published *package* is public, so anyone can `oras pull` the binary
+# with no token. See README "Install or Upgrade".
 #
 # Native macOS binaries ride along because these are raw OCI artifacts,
 # not container images (images can't carry darwin binaries).

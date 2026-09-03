@@ -46,7 +46,10 @@ runs:
         esac
         bin=grcli; [ "$os" = "windows" ] && bin=grcli.exe
 
-        ref="${image}:${GRCLI_VERSION}"
+        # Resolve the tag once and use the digest for both verify and pull, so a
+        # retag between the two steps cannot install a binary that was never
+        # verified.
+        ref="${image}@$(oras resolve "${image}:${GRCLI_VERSION}")"
 
         if [ "${GRCLI_VERIFY}" = "true" ]; then
           if ! command -v cosign >/dev/null 2>&1; then

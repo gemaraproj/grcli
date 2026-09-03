@@ -5,5 +5,7 @@ coverage.out
 grcli-out/
 .grcli.yaml
 .env
+go.work
+go.work.sum
 
 .claude/

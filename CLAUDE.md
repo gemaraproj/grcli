@@ -8,12 +8,12 @@ Go module and repo: `github.com/gemaraproj/grcli`; releases publish to `ghcr.io/
 `CHANGELOG.md` tracks the pre-1.0 breaking changes. This file is the map — point there, don't duplicate.
 
 > **Building new end-user tooling? Reuse this, don't fork it.** The `internal/` packages below
-> are the intended reuse surface, and the wire types come from `../grc-store-protocol`. See the
-> reuse map in `../CLAUDE.md`.
+> are the intended reuse surface, and the wire types come from
+> `github.com/revanite-io/grc-store-protocol`.
 
 ## Dev loop (Makefile)
 - `make build` → `bin/grcli` · `make test` (`./...`) · `make lint` (golangci-lint) · `make vet`
-- `make ci-local` — fmtcheck + vet + lint + testcov (the CI gate)
+- `make ci-local` — fmtcheck + vet + lint + tidycheck + testcov (the CI gate)
 
 ## Commands (`cmd/`)
 `login`/`logout` (OIDC device flow, credential storage) · `validate` (YAML vs Gemara spec via
@@ -44,4 +44,4 @@ credential file and login hints — pass it to every clientkit auth call.
 - Config: flag > `GRCLI_*` env > user-global `$XDG_CONFIG_HOME/grcli/config.yaml` (→ `~/.config/grcli/config.yaml`) > default. **No per-project layer** — a repo-local `./.grcli.yaml` is not read (a committed file must not steer a publish/verify tool) and earns a migration warning. `--config <file>` bypasses the search. The cache toggle key is flat `cache-enabled` (not nested `cache.enabled`) because `$GRCLI_CACHE` shadows the `cache.*` viper namespace. Env prefix `GRCLI_*` (e.g. `GRCLI_REGISTRY_TOKEN`, `GRCLI_GEMARA_SPEC_DIR`). `grcli verify`'s `--certificate-oidc-issuer` defaults to GitHub Actions. (Neither `./.grcli.yaml` nor `$HOME/.grcli.yaml` is read.)
 - Credentials stored at `$XDG_DATA_HOME/grcli/credentials.json` (0600).
 - CI publishing uses GitHub Actions OIDC (`ACTIONS_ID_TOKEN_REQUEST_URL/_TOKEN`); example at `examples/github-actions/publish.yml`.
-- **grcli defaults to the *prod* hub** — for test publishing use `../publish-fixtures/` (forces preview).
+- **grcli defaults to the *prod* hub** — for test publishing pass `--url https://hub.preview.grc.store` (or set `GRCLI_URL`).

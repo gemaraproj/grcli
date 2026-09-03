@@ -40,7 +40,7 @@ tidycheck:
 	mv go.mod.bak go.mod; mv go.sum.bak go.sum; \
 	if [ -n "$$diff" ]; then echo "go mod tidy would change go.mod/go.sum"; exit 1; fi
 
-ci-local: fmtcheck vet lint testcov
+ci-local: fmtcheck vet lint tidycheck testcov
 
 clean:
 	rm -rf bin coverage.out grcli-out

@@ -77,10 +77,6 @@ jobs:
           oras pull "ghcr.io/gemaraproj/grcli:$GRCLI_VERSION" --platform linux/amd64
           sudo install grcli /usr/local/bin/grcli
 
-      # Required for keyless signing — the same OIDC identity authorizes the push.
-      - name: Install cosign
-        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
-
       - name: Publish
         env:
           FILES: ${{ inputs.files }}

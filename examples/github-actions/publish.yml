@@ -49,8 +49,7 @@ jobs:
       # signing runs IN-PROCESS via sigstore-go: grcli requests the
       # Actions OIDC token itself, gets a Fulcio certificate, logs to Rekor and
       # attaches the signature as an OCI referrer — no external tools, no
-      # secrets. Verified by a live CI smoke on 2026-08-19 from a runner with
-      # no cosign on PATH. cosign is still needed ONLY for the `--cosign-key`
+      # secrets. cosign is still needed ONLY for the `--cosign-key`
       # (key-based) path, which this example does not use.
       #
       # Pin a tag, never `:latest`, so a bad release cannot reach you
