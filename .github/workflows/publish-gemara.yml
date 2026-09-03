@@ -1,0 +1,92 @@
+# Reusable workflow: publish Gemara artifact(s) to grc.store with grcli.
+#
+# The artifact TYPE (catalog, threat model, evaluation log, …) is NOT a
+# parameter — grcli reads it from each file's Gemara `metadata`, so this one
+# workflow publishes any Gemara type. You supply the file(s), the license, and
+# optionally the hub URL.
+#
+# === AUTH: NO SECRET REQUIRED (trusted publishing) ===
+# grcli uses the workflow's GitHub Actions OIDC token as its hub credential and
+# for cosign keyless signing. `id-token: write` is the entire auth setup — do
+# NOT add GRCLI_TOKEN, a PAT, or any `secrets.*` reference.
+#
+# Prerequisite (one-time, by a hub/org admin — NOT in the caller's repo):
+# register the calling repository (owner/repo, optionally ref-pinned) as a
+# Trusted CI publisher for the target namespace. Without that binding the hub
+# returns 403; adding a GitHub secret will not fix it.
+#
+# --- Call it from a catalog repo ---
+#   name: Publish catalog
+#   on:
+#     push:
+#       branches: [main]
+#       paths: ['controls.yaml']
+#     workflow_dispatch: {}
+#   jobs:
+#     publish:
+#       permissions:
+#         contents: read
+#         id-token: write        # caller MUST grant this — it's what auth uses
+#       uses: gemaraproj/grcli/.github/workflows/publish-gemara.yml@v0.1.0
+#       with:
+#         files: controls.yaml
+#         license: Apache-2.0
+
+name: Publish Gemara artifact
+
+on:
+  workflow_call:
+    inputs:
+      files:
+        description: 'Artifact file(s), whitespace/newline-separated. Each entry is published as one artifact; grcli reads its type + version from the YAML.'
+        required: true
+        type: string
+      license:
+        description: 'REQUIRED publication license as an SPDX expression (e.g. Apache-2.0, MIT OR Apache-2.0, or a LicenseRef-… token). Applied to every file.'
+        required: true
+        type: string
+      hub-url:
+        description: 'grc.store hub base URL — discovers the registry and is the sync target.'
+        required: false
+        type: string
+        default: https://hub.grc.store
+      grcli-version:
+        description: 'grcli release tag to install from ghcr.io/gemaraproj/grcli.'
+        required: false
+        type: string
+        default: v0.1.0
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write            # hub auth + cosign keyless signing (no secret)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # grcli ships as a public, signed, multi-platform OCI artifact; pulling
+      # needs no token. v2: https://github.com/oras-project/setup-oras/releases/tag/v2.0.0
+      - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
+      - name: Install grcli ${{ inputs.grcli-version }}
+        env:
+          GRCLI_VERSION: ${{ inputs.grcli-version }}
+        run: |
+          oras pull "ghcr.io/gemaraproj/grcli:$GRCLI_VERSION" --platform linux/amd64
+          sudo install grcli /usr/local/bin/grcli
+
+      - name: Publish
+        env:
+          FILES: ${{ inputs.files }}
+          LICENSE: ${{ inputs.license }}
+          HUB_URL: ${{ inputs.hub-url }}
+        run: |
+          set -euo pipefail
+          # Word-split FILES on whitespace/newlines: one grcli publish per artifact.
+          for f in $FILES; do
+            echo "::group::grcli publish $f"
+            grcli publish -f "$f" --license "$LICENSE" --url "$HUB_URL"
+            echo "::endgroup::"
+          done

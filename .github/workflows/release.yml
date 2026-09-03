@@ -1,0 +1,95 @@
+name: release
+
+# Publish grcli as a public, multi-platform OCI artifact on GHCR, signed
+# keyless with cosign. Triggered by pushing a semver tag (e.g. v0.1.0).
+#
+# The published *package* is public, so anyone can `oras pull` the binary
+# with no token. See README "Install or Upgrade".
+#
+# Native macOS binaries ride along because these are raw OCI artifacts,
+# not container images (images can't carry darwin binaries).
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  packages: write   # push the OCI artifact to GHCR
+  id-token: write   # cosign keyless signing (Sigstore via GitHub OIDC)
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/${{ github.repository }}   # ghcr.io/gemaraproj/grcli
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false   # release job holds packages:write + id-token:write; no cache poisoning surface (Kusari)
+
+      # oras >= 1.3 is required for --artifact-platform and
+      # `oras manifest index create`.
+      # v2: https://github.com/oras-project/setup-oras/releases/tag/v2.0.0
+      - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
+        with:
+          version: 1.3.0
+
+      - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
+
+      - name: Log in to GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$GH_TOKEN" | oras login "$REGISTRY" -u "$ACTOR" --password-stdin
+
+      - name: Build binaries, push per-platform artifacts, assemble index
+        id: build
+        env:
+          VERSION: ${{ github.ref_name }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          ldflags="-s -w -X github.com/gemaraproj/grcli/cmd.version=${VERSION}"
+          artifact_type="application/vnd.gemaraproj.grcli.binary"
+          platforms="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64"
+
+          children=()
+          for p in $platforms; do
+            os="${p%/*}"; arch="${p#*/}"
+            bin="grcli"; [ "$os" = "windows" ] && bin="grcli.exe"
+            echo "::group::build & push $p"
+            GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "$ldflags" -o "$bin" .
+            tag="${VERSION}-${os}-${arch}"
+            # Push the raw binary as a platform-tagged OCI artifact. The file
+            # is stored under its own name, so `oras pull` restores `grcli`.
+            oras push --artifact-type "$artifact_type" \
+              --artifact-platform "$os/$arch" \
+              "${IMAGE}:${tag}" \
+              "${bin}:application/octet-stream"
+            rm -f "$bin"
+            children+=( "${IMAGE}:${tag}" )
+            echo "::endgroup::"
+          done
+
+          # Combine the per-platform artifacts into one multi-arch index.
+          # Platform metadata is carried from each child (set above), so a
+          # later `oras pull --platform os/arch` selects the right binary.
+          oras manifest index create "${IMAGE}:${VERSION}" "${children[@]}"
+          oras tag "${IMAGE}:${VERSION}" latest
+
+          digest="$(oras resolve "${IMAGE}:${VERSION}")"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "Published ${IMAGE}:${VERSION} (${digest})"
+
+      # Sign by digest. The signature covers the index, hence every tag
+      # (version and latest) that points at it.
+      - name: Sign the index (keyless)
+        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
