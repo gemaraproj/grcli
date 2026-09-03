@@ -29,7 +29,7 @@ const (
 	flagCertIdentity   = "certificate-identity"
 	flagCertOIDCIssuer = "certificate-oidc-issuer"
 	// flagTrustedRoot overrides the embedded Sigstore public-good
-	// trusted_root.json with one read from disk (ADR-0046 decision 4) — for
+	// trusted_root.json with one read from disk — for
 	// air-gapped deployments or a private Sigstore instance. Env form
 	// GRCLI_TRUSTED_ROOT; there is no --flag, only the env / config key, since
 	// it is an ops-level override, not a per-invocation knob.
@@ -40,7 +40,7 @@ const (
 // --certificate-oidc-issuer (or the GRCLI_CERTIFICATE_OIDC_ISSUER env /
 // user-global config key of the same name) is not set. Publishing to grc.store
 // is a GitHub-Actions OIDC flow, so this is the issuer for ~every publisher;
-// GitHub Enterprise / other CI / an OIDC proxy override it (ADR-0044). It is
+// GitHub Enterprise / other CI / an OIDC proxy override it. It is
 // applied contextually inside keyless mode, NOT as a viper default, so it can't
 // disturb key-vs-keyless detection.
 const defaultCertOIDCIssuer = "https://token.actions.githubusercontent.com"
@@ -50,7 +50,7 @@ func newVerifyCmd(v *viper.Viper) *cobra.Command {
 		Use:   "verify",
 		Short: "Verify a remote Gemara bundle's signature",
 		Long: `Verifies the Sigstore signature attached to a remote Gemara bundle.
-Keyless verification runs IN-PROCESS (ADR-0046) — no external tools are
+Keyless verification runs IN-PROCESS — no external tools are
 required, just the grcli binary. The bundle must already be pushed to a
 registry: signatures live at the registry layer as an OCI 1.1 referrer, not in
 the bundle bytes, so verifying a local OCI layout from 'publish --dry-run' is
@@ -65,7 +65,7 @@ with each release. For an air-gapped deployment or a private Sigstore instance,
 point GRCLI_TRUSTED_ROOT (env or config key 'trusted-root') at a
 trusted_root.json on disk.
 
-With NO trust flags, verify runs in zero-flag mode (ADR-0045): it fetches
+With NO trust flags, verify runs in zero-flag mode: it fetches
 the catalog record from the hub, reads the keyless signer identity the hub
 verified and pinned at ingest, and verifies against it — so a consumer needs
 no prior knowledge of the publishing workflow. The identity it trusted, and
@@ -135,7 +135,7 @@ func runVerify(cmd *cobra.Command, v *viper.Viper) error {
 		return err
 	}
 
-	// ADR-0031: the signature lives in the bearer-auth registry. Mint an
+	// The signature lives in the bearer-auth registry. Mint an
 	// anonymous pull token from the hub (when --url is set and no override is
 	// present) and export it via GRCLI_REGISTRY_TOKEN. The in-process oras fetch
 	// reads it through the Docker credential chain (internal/registry), and
@@ -149,8 +149,8 @@ func runVerify(cmd *cobra.Command, v *viper.Viper) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "verifying %s (%s)\n", policy.reference, policy.modeDescription())
 
-	// Key-based verification is the ONLY path that still shells out to cosign
-	// (ADR-0046 decision 5): a niche publisher-shared-key mode the hub doesn't
+	// Key-based verification is the ONLY path that still shells out to
+	// cosign: a niche publisher-shared-key mode the hub doesn't
 	// pin yet. The cosign prerequisite now applies exclusively here.
 	if policy.keyPath != "" {
 		if _, err := exec.LookPath("cosign"); err != nil {
@@ -165,11 +165,11 @@ func runVerify(cmd *cobra.Command, v *viper.Viper) error {
 	}
 
 	// Keyless verification (explicit --certificate-identity and zero-flag
-	// hub-lookup) runs in-process against real Sigstore (ADR-0046) — no cosign.
+	// hub-lookup) runs in-process against real Sigstore — no cosign.
 	return runKeylessVerify(ctx, v, policy, out)
 }
 
-// runKeylessVerify performs in-process keyless verification (ADR-0046): it
+// runKeylessVerify performs in-process keyless verification: it
 // builds a sigstore-go verifier over the pinned (or GRCLI_TRUSTED_ROOT-override)
 // trust root, discovers the signature bundle as an OCI referrer of the artifact
 // manifest, and verifies it against both the artifact digest and the pinned
@@ -197,7 +197,7 @@ func runKeylessVerify(ctx context.Context, v *viper.Viper, policy verifyPolicy, 
 }
 
 // newSigstoreVerifier builds the in-process verifier, honoring the
-// GRCLI_TRUSTED_ROOT override (ADR-0046 decision 4). A zero timeout selects the
+// GRCLI_TRUSTED_ROOT override. A zero timeout selects the
 // package default. Both constructors require SCTs — the production posture is
 // never relaxed off the embedded/override root.
 func newSigstoreVerifier(v *viper.Viper) (*sigverify.Verifier, error) {
@@ -230,9 +230,9 @@ type verifyPolicy struct {
 	issuer         string // populated for keyless verification (both modes)
 	// hubIdentity is the canonical identity string the hub recorded, kept for
 	// the pre-verify announcement so trust in the hub is visible, never silent.
-	// Non-empty only in hub-lookup mode (ADR-0045 decision 8).
+	// Non-empty only in hub-lookup mode.
 	hubIdentity   string
-	registryToken string // Distribution pull token for the bearer-auth registry (ADR-0031)
+	registryToken string // Distribution pull token for the bearer-auth registry
 	plainHTTP     bool   // registry speaks plain HTTP (local dev) — pass cosign --allow-http-registry
 }
 
@@ -250,12 +250,12 @@ func (p verifyPolicy) modeDescription() string {
 }
 
 // cosignArgs builds the argv for the ONLY remaining cosign shell-out:
-// --cosign-key (key-based) verification (ADR-0046 decision 5). The keyless
+// --cosign-key (key-based) verification. The keyless
 // paths verify in-process and never reach here. grcli signs with the Sigstore
 // bundle format (bundle-as-OCI-referrer), so cosign must expect it too — the
 // bundle-format flags come from the SAME version-gated helper the sign side
 // uses (sign.BundleFormatArgs), so sign and verify can't silently drift on
-// either the format OR the cosign version band (ADR-0035).
+// either the format OR the cosign version band.
 func (p verifyPolicy) cosignArgs(ctx context.Context) ([]string, error) {
 	bundleArgs, err := sign.BundleFormatArgs(ctx)
 	if err != nil {
@@ -263,7 +263,7 @@ func (p verifyPolicy) cosignArgs(ctx context.Context) ([]string, error) {
 	}
 	args := append([]string{"verify"}, bundleArgs...)
 	// cosign verify pulls the signature from the registry, which now
-	// requires a bearer token (ADR-0031). Unlike the in-process oras path, the
+	// requires a bearer token. Unlike the in-process oras path, the
 	// cosign subprocess can't read GRCLI_REGISTRY_TOKEN, so pass it
 	// explicitly when we minted one.
 	if p.registryToken != "" {
@@ -324,12 +324,12 @@ func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, err
 	case issuerSet && !keylessMode:
 		return verifyPolicy{}, errors.New("--certificate-oidc-issuer requires --certificate-identity")
 	}
-	// With no key and no identity we're in zero-flag mode (ADR-0045 decision 8):
+	// With no key and no identity we're in zero-flag mode:
 	// the signer identity comes from the hub's catalog record, not the flags.
 	// (A lone --certificate-oidc-issuer is already rejected above, so this is
 	// exactly "no trust material at all".)
 	hubLookupMode := !keyMode && !keylessMode
-	// Keyless with no explicit issuer defaults to GitHub Actions (ADR-0044).
+	// Keyless with no explicit issuer defaults to GitHub Actions.
 	// This runs AFTER mode resolution, and cosign still checks issuer == this
 	// value, so a wrong default can only cause a false rejection, never a
 	// false acceptance. Hub-lookup mode carries its own issuer from the record.
@@ -373,7 +373,7 @@ func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, err
 }
 
 // resolveHubIdentity fills the keyless trust material on policy from the hub's
-// recorded signer identity for the catalog coordinate (ADR-0045 decision 8).
+// recorded signer identity for the catalog coordinate.
 // The hub is trusted only as the *identity* source here — cosign still performs
 // the Sigstore verification against it — and runVerify prints what was used and
 // that it came from the hub before verifying, so the trust is never silent.

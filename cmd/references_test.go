@@ -347,7 +347,7 @@ func TestWriteReference_RejectsTraversal(t *testing.T) {
 
 // TestEntryFromBundle_DropsImports documents that the v2 cache entry stores
 // Files + manifest only — a referenced bundle's own transitive imports are not
-// represented (reference resolution is direct-only, ADR-0039). fetchReference
+// represented (reference resolution is direct-only). fetchReference
 // warns via noteDroppedReferenceImports rather than dropping them silently.
 func TestEntryFromBundle_DropsImports(t *testing.T) {
 	b := &bundle.Bundle{

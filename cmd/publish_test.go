@@ -134,7 +134,7 @@ func TestResolveTarget(t *testing.T) {
 	}
 }
 
-// TestResolveTargetURL covers the ADR-0026 discovery hook: --url drives a
+// TestResolveTargetURL covers the discovery hook: --url drives a
 // discovery call to resolve the registry, and --dry-run skips it. Mock
 // hub via httptest.
 func TestResolveTargetURL(t *testing.T) {
@@ -242,7 +242,7 @@ func TestResolveBearerToken(t *testing.T) {
 		got, err := resolveBearerToken(context.Background(), v)
 		require.NoError(t, err)
 		require.Equal(t, "gha.workflow.jwt", got,
-			"in CI with no explicit token, the workflow OIDC token is the credential (ADR-0032)")
+			"in CI with no explicit token, the workflow OIDC token is the credential")
 	})
 
 	t.Run("explicit --token wins even inside GitHub Actions", func(t *testing.T) {

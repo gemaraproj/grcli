@@ -19,7 +19,7 @@ import (
 // FetchRegistryToken exchanges a hub (Keycloak) bearer token for a
 // short-lived OCI Distribution token scoped to the given repository and
 // actions, minted by the hub's GET /v2/token endpoint — the bearer realm
-// the registry (zot) trusts (ADR-0031 on the backend).
+// the registry (zot) trusts.
 //
 // The hub grants pull to everyone and push only to a namespace owner or
 // hub admin, so:

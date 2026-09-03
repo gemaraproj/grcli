@@ -62,10 +62,10 @@ func newRootCmd() *cobra.Command {
 	return cmd
 }
 
-// flagCacheEnabled is the config key (ADR-0043) that durably turns the artifact
+// flagCacheEnabled is the config key that durably turns the artifact
 // cache off (equivalent to passing --no-cache on every command). Default true.
 // It is a FLAT key, not nested `cache.enabled`, on purpose: the $GRCLI_CACHE
-// location env var (ADR-0039) shadows the whole `cache.*` namespace under
+// location env var shadows the whole `cache.*` namespace under
 // viper's AutomaticEnv, which would mask a nested key's default and file value
 // whenever $GRCLI_CACHE is set. The env form is GRCLI_CACHE_ENABLED.
 const flagCacheEnabled = "cache-enabled"
@@ -83,11 +83,11 @@ const flagCacheEnabled = "cache-enabled"
 var grcliApp = auth.App{Name: "grcli", TokenEnv: "GRCLI_TOKEN", TokenFlag: "--token"}
 
 // loadConfig wires the GRCLI_* env prefix and reads the single user-global
-// config file (ADR-0043, amended by ADR-0044). Precedence, highest first:
+// config file. Precedence, highest first:
 // explicit flag > GRCLI_* env > user-global $XDG_CONFIG_HOME/grcli/config.yaml
 // (fallback ~/.config/grcli/config.yaml) > built-in default. There is NO
 // per-project layer: a repo-local ./.grcli.yaml is deliberately not read
-// (ADR-0044) — a committed config file steering a publish/verify tool is a
+// — a committed config file steering a publish/verify tool is a
 // footgun — so a present one earns a migration warning instead. --config
 // <file> selects a single file and bypasses the search. A missing file is not
 // an error; any other read error is a warning (on the command's stderr) so the
@@ -121,15 +121,15 @@ func loadConfig(v *viper.Viper, cfgFile string, warn io.Writer) error {
 	return nil
 }
 
-// projectConfigFile is the repo-local config path. As of ADR-0044 grcli no
-// longer reads it; the constant remains so warnIgnoredConfig can nudge anyone
+// projectConfigFile is the repo-local config path. grcli no longer reads
+// it; the constant remains so warnIgnoredConfig can nudge anyone
 // migrating from the per-project layer to the user-global file.
 const projectConfigFile = ".grcli.yaml"
 
 // warnIgnoredConfig warns about config files sitting at locations grcli no
 // longer reads, so a settings file isn't silently ignored after a layout
-// change. Retired locations: the per-project ./.grcli.yaml (ADR-0044) and the
-// pre-ADR-0043 dotfiles (~/.grcli.yaml and $XDG_CONFIG_HOME/grcli/.grcli.yaml).
+// change. Retired locations: the per-project ./.grcli.yaml and the
+// legacy dotfiles (~/.grcli.yaml and $XDG_CONFIG_HOME/grcli/.grcli.yaml).
 // The only blessed location is the user-global config.yaml (globalPath).
 func warnIgnoredConfig(globalPath string, w io.Writer) {
 	// Each candidate carries a display path (friendly, e.g. relative

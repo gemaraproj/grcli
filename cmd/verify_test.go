@@ -77,7 +77,7 @@ func TestVerify_FlagValidation(t *testing.T) {
 		{
 			// issuer without identity (and no key) is an explicit error:
 			// identity is the keyless trigger; a lone issuer has nothing to
-			// bind to (ADR-0044). Identity WITHOUT issuer is NOT here — it
+			// bind to. Identity WITHOUT issuer is NOT here — it
 			// now succeeds by defaulting the issuer (see TestResolveVerifyPolicy_URL).
 			name: "issuer-without-identity",
 			args: []string{
@@ -97,7 +97,7 @@ func TestVerify_FlagValidation(t *testing.T) {
 	}
 }
 
-// TestResolveVerifyPolicy_URL covers the ADR-0026 --url path through the
+// TestResolveVerifyPolicy_URL covers the --url path through the
 // verify command. Catches the BLOCKER from the post-ship QA pass: when
 // --url drives discovery, the registry_url advertised by the hub carries
 // a scheme (https://...), which cosign rejects as an invalid OCI image
@@ -165,7 +165,7 @@ func TestResolveVerifyPolicy_URL(t *testing.T) {
 }
 
 // TestVerifyPolicy_CosignArgs now covers ONLY key-mode: keyless verification
-// moved in-process (ADR-0046), so cosign is the sole remaining shell-out and it
+// moved in-process, so cosign is the sole remaining shell-out and it
 // only ever runs with --key. The keyless trust material is carried by
 // identityPolicy() instead (TestVerifyPolicy_IdentityPolicy below).
 func TestVerifyPolicy_CosignArgs(t *testing.T) {
@@ -209,7 +209,7 @@ func TestVerifyPolicy_CosignArgs(t *testing.T) {
 // TestVerifyPolicy_IdentityPolicy pins the mapping from the resolved policy to
 // the in-process sigstore-go identity pin — the security-critical seam that
 // replaced cosign's --certificate-identity / --certificate-identity-regexp +
-// --certificate-oidc-issuer flags (ADR-0046 decision 2). The exact-vs-regexp
+// --certificate-oidc-issuer flags. The exact-vs-regexp
 // choice and the issuer must carry through byte-for-byte.
 func TestVerifyPolicy_IdentityPolicy(t *testing.T) {
 	t.Run("explicit keyless mode → exact SAN, exact issuer", func(t *testing.T) {
@@ -264,7 +264,7 @@ func hubLookupServer(t *testing.T, signerIdentity string, onCatalog func()) *htt
 }
 
 // TestResolveVerifyPolicy_HubLookup covers the zero-flag verify-by-coordinate
-// path (ADR-0045 decision 8): no trust flags, so the signer identity is read
+// path: no trust flags, so the signer identity is read
 // from the hub's catalog record and turned into an anchored keyless cosign
 // policy.
 func TestResolveVerifyPolicy_HubLookup(t *testing.T) {
@@ -350,7 +350,7 @@ func TestResolveVerifyPolicy_HubLookup(t *testing.T) {
 		require.Equal(t, 0, called, "the catalog record must not be fetched when the identity is supplied explicitly")
 		require.Equal(t, "https://github.com/team/repo/.github/workflows/publish.yml@refs/heads/main", policy.identity)
 		require.Empty(t, policy.identityRegexp, "explicit keyless mode uses the exact identity, not a regexp")
-		require.Equal(t, defaultCertOIDCIssuer, policy.issuer, "explicit keyless still defaults the issuer (ADR-0044)")
+		require.Equal(t, defaultCertOIDCIssuer, policy.issuer, "explicit keyless still defaults the issuer")
 	})
 
 	t.Run("explicit --cosign-key bypasses the hub lookup entirely", func(t *testing.T) {

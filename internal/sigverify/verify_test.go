@@ -144,7 +144,7 @@ func TestVerifyEntity_RejectsBadDigestFormat(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestVerifyEntity_HubLookupRegexp_Adversarial reuses the ADR-0045 adversarial
+// TestVerifyEntity_HubLookupRegexp_Adversarial reuses the hub's adversarial
 // SAN cases, now asserted against the IN-PROCESS matcher (a real
 // VirtualSigstore-signed cert carrying each SAN) rather than a cosign arg
 // string. The anchored "^QuoteMeta(path)@" pin must admit ANY ref of the exact

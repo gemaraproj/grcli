@@ -22,7 +22,7 @@ import (
 )
 
 // SyncRequest and SyncResponse are the sync request/reply, aliased to the shared
-// wire-contract types (ADR-0035) so grcli and the hub can't drift on them.
+// wire-contract types so grcli and the hub can't drift on them.
 type (
 	SyncRequest  = syncapi.Request
 	SyncResponse = syncapi.Response
@@ -124,7 +124,7 @@ type Release struct {
 	// License is this version's publication license (canonical SPDX
 	// expression), exposed per-release by the hub. Absent when none was
 	// declared. Used by reference resolution to compare a dependency's
-	// license against the primary's (ADR-0039).
+	// license against the primary's.
 	License string `json:"license,omitempty"`
 }
 
@@ -155,7 +155,7 @@ type Catalog struct {
 	Releases             []Release `json:"releases"`
 	// SignerIdentity is the canonical keyless signer the hub verified and
 	// TOFU-pinned for this coordinate at ingest — "keyless:<issuer>#<workflow-path>",
-	// ref-stripped (grc-store-protocol/identity, ADR-0045 decision 6). Absent when
+	// ref-stripped (grc-store-protocol/identity). Absent when
 	// no signed version has been ingested (or the hub predates hub-side
 	// verification); grcli verify's zero-flag mode reads it to derive the cosign
 	// trust policy without the consumer having to know the workflow path.

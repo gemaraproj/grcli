@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package refs parses the mapping references out of a Gemara artifact body
-// and decides which of them grcli unpack should resolve against a hub
-// (ADR-0039). It is deliberately pure — no network, no filesystem — so the
+// and decides which of them grcli unpack should resolve against a
+// hub. It is deliberately pure — no network, no filesystem — so the
 // selection and host-recognition rules are unit-testable in isolation.
 //
 // Gemara models references in two layers (go-gemara generated_types.go):
@@ -152,7 +152,7 @@ func (a *Artifact) Select(mode Mode) []Selected {
 
 // Recognize decides whether a reference URL points at an artifact resolvable
 // against the targeted hub, and if so extracts its (namespace, catalogID) from
-// the URL path (ADR-0039 decision 2). The version is NOT in the URL — it lives
+// the URL path. The version is NOT in the URL — it lives
 // in the MappingReference.version field.
 //
 // Rules, given the host of the --url target:

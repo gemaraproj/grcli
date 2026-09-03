@@ -29,7 +29,7 @@ import (
 
 // Flag names are declared once so the compiler catches typos at every
 // viper.Get call site. publish does not expose a tag/version flag —
-// the OCI tag is always metadata.version (ADR-0033). unpack and verify
+// the OCI tag is always metadata.version. unpack and verify
 // take --version (see flagVersion in unpack.go) to address a published
 // bundle.
 const (
@@ -63,7 +63,7 @@ instead of touching any network.
 Auth in GitHub Actions: no GitHub secret, no --token, no GRCLI_TOKEN —
 when run inside a workflow with permissions: id-token: write, grcli
 mints a GitHub Actions OIDC token and presents it as the credential
-(ADR-0032 trusted publishing). The repo (owner/repo, optionally pinned
+(trusted publishing). The repo (owner/repo, optionally pinned
 to a ref) must be registered as a trusted publisher on the hub for the
 target namespace; a 403 means that binding is missing — not that you
 need to set a secret.`,
@@ -75,14 +75,14 @@ need to set a secret.`,
 
 	flags := cmd.Flags()
 	flags.StringSliceP(flagFile, "f", nil, "input file(s) describing one artifact (repeatable; comma-separated also accepted)")
-	flags.String(flagURL, defaultURL, "grc.store base URL — discovers the registry and is the hub sync target (ADR-0026)")
+	flags.String(flagURL, defaultURL, "grc.store base URL — discovers the registry and is the hub sync target")
 	flags.String(flagRepository, "", "repository path within the registry (default: <author.id>/<metadata.id>, slugified to [a-z0-9._-])")
 	flags.String(flagToken, "", "bearer token for the hub sync call (or GRCLI_TOKEN); leave unset in GitHub Actions — the workflow's OIDC token is used automatically (trusted publishing, no GitHub secret needed)")
 	flags.Bool(flagDryRun, false, "skip all network — emit OCI layout to --output instead")
 	flags.String(flagOutput, "grcli-out", "directory to write the OCI layout to when --dry-run")
 	flags.Bool(flagNoSign, false, "skip cosign signing even when material is available")
 	flags.String(flagCosignKey, "", "cosign key file for local signing (or COSIGN_KEY)")
-	flags.String(flagLicense, "", "REQUIRED: publication license as an SPDX expression (e.g. Apache-2.0, MIT OR Apache-2.0, LicenseRef-Acme-Proprietary); stamped as the org.opencontainers.image.licenses OCI annotation. Publish fails before any network call if unset (ADR-0037)")
+	flags.String(flagLicense, "", "REQUIRED: publication license as an SPDX expression (e.g. Apache-2.0, MIT OR Apache-2.0, LicenseRef-Acme-Proprietary); stamped as the org.opencontainers.image.licenses OCI annotation. Publish fails before any network call if unset")
 
 	// Flags are bound to viper inside RunE (see runPublish) rather than
 	// here at construction time. Two subcommands sharing a viper instance
@@ -132,7 +132,7 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 		return err
 	}
 
-	// Strict license gate (ADR-0037 decision 1, tightening ADR-0036): grcli
+	// Strict license gate: grcli
 	// is the strict end. --license is now REQUIRED. Validate and canonicalize
 	// BEFORE any pack/push — including the --dry-run path — so a missing,
 	// malformed, or unknown SPDX expression never produces OCI bytes (locally
@@ -155,7 +155,7 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 			return err
 		}
 		// Pre-flight: versions are immutable, so halt BEFORE packing or
-		// pushing if the coordinate is already taken (ADR-0031). This is
+		// pushing if the coordinate is already taken. This is
 		// what stops a re-publish from clobbering existing bytes in the
 		// registry — the registry would accept the overwrite before the
 		// hub's sync-time guard could reject it.
@@ -223,12 +223,11 @@ type signContext struct {
 
 // resolveTarget merges --repository/--url/--dry-run with the
 // metadata-derived defaults and validates the combination. --url drives
-// the registry hostname via the hub's discovery endpoint (ADR-0026);
+// the registry hostname via the hub's discovery endpoint;
 // --dry-run skips discovery since it never touches the network.
 //
-// The OCI tag is always metadata.version — no override. ADR-0033 (in
-// grc.store-backend) made tag == metadata.version a hub-enforced
-// invariant; a --tag override could only ever produce a 422
+// The OCI tag is always metadata.version — no override. The hub
+// enforces tag == metadata.version as an invariant; a --tag override could only ever produce a 422
 // tag_version_mismatch from the syncer, so the flag was removed rather
 // than left as a foot-gun.
 func resolveTarget(ctx context.Context, v *viper.Viper, loaded *source.Loaded) (publishTarget, error) {
@@ -340,8 +339,8 @@ func signAndNotify(ctx context.Context, v *viper.Viper, sc signContext) error {
 	return nil
 }
 
-// checkVersionAvailable is the publish pre-flight. Versions are immutable
-// (ADR-0031), so if the target coordinate already exists on the hub, halt
+// checkVersionAvailable is the publish pre-flight. Versions are
+// immutable, so if the target coordinate already exists on the hub, halt
 // here — before packing, before any registry write. That prevents a
 // re-publish from clobbering the existing bytes in the registry (which
 // accepts the overwrite before the hub's sync-time guard can reject it).
@@ -395,7 +394,7 @@ func publishHubURL(v *viper.Viper) string {
 
 // authenticatePush exports a registry push token (GRCLI_REGISTRY_TOKEN)
 // so the oras push and the cosign signature push authenticate to the
-// bearer-auth registry (ADR-0031). The hub grants push only to a
+// bearer-auth registry. The hub grants push only to a
 // namespace owner or admin, so a push needs a hub login: when no explicit
 // registry credential override is present, we resolve the login token and
 // surface a clear `grcli login` hint if it's missing. No-op when there's
@@ -434,11 +433,11 @@ func resolveBearerToken(ctx context.Context, v *viper.Viper) (string, error) {
 		ExplicitToken: v.GetString(flagToken),
 		Warn:          os.Stderr,
 	}
-	// Resolution order (ADR-0028): --token / GRCLI_TOKEN (captured above)
+	// Resolution order: --token / GRCLI_TOKEN (captured above)
 	// > GitHub Actions OIDC > stored device-login creds. The CI step:
 	// when no explicit token is set and we're in a GHA job, fetch the
 	// workflow's OIDC token and present it directly — the hub validates it
-	// (ADR-0032) and maps the repo to its trusted-publisher namespace. No
+	// and maps the repo to its trusted-publisher namespace. No
 	// secret, no login. The audience comes from the hub's discovery doc
 	// (ci_audience), falling back to the hub URL, so it always matches the
 	// hub's HUB_CI_OIDC_AUDIENCE. On any failure we fall through to the
@@ -462,8 +461,8 @@ func resolveBearerToken(ctx context.Context, v *viper.Viper) (string, error) {
 	return auth.Resolve(ctx, in)
 }
 
-// validatePublishLicense runs the strict SPDX gate for --license (ADR-0037
-// decision 1, tightening ADR-0036: grcli is the strict end). The flag is now
+// validatePublishLicense runs the strict SPDX gate for --license (grcli is
+// the strict end; the hub is lenient). The flag is now
 // REQUIRED: an empty/whitespace-only value is an error — distinct from the
 // invalid-value message, because a missing flag and a malformed value are
 // different user mistakes. A supplied value must be a well-formed SPDX
@@ -474,7 +473,7 @@ func resolveBearerToken(ctx context.Context, v *viper.Viper) (string, error) {
 func validatePublishLicense(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "", errors.New("a publication license is required: pass --license with an SPDX expression (e.g. Apache-2.0, MIT OR Apache-2.0; see https://spdx.org/licenses) or a LicenseRef-… token for a custom/proprietary license (ADR-0037)")
+		return "", errors.New("a publication license is required: pass --license with an SPDX expression (e.g. Apache-2.0, MIT OR Apache-2.0; see https://spdx.org/licenses) or a LicenseRef-… token for a custom/proprietary license")
 	}
 	canonical, err := spdx.Canonicalize(raw)
 	if err != nil {

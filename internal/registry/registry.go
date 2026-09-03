@@ -44,8 +44,8 @@ type PackInput struct {
 	GemaraVersion string
 	Body          []byte
 	Provenance    any // marshaled into bundle.Manifest.Metadata
-	// License is the canonical SPDX publication-license expression
-	// (ADR-0036). When non-empty it is stamped as the standard OCI
+	// License is the canonical SPDX publication-license
+	// expression. When non-empty it is stamped as the standard OCI
 	// manifest annotation org.opencontainers.image.licenses. Empty means
 	// no annotation. The caller (cmd/publish.go) is the strict gate: this
 	// value is already validated and canonicalized via spdx.Canonicalize.
@@ -106,7 +106,7 @@ func UnpackRemote(ctx context.Context, registryHost, repository, tag string) (*b
 //
 // registryHost may include an http:// or https:// scheme prefix —
 // useful when the hub's discovery endpoint advertises a full URL via
-// HUB_OCI_PUBLIC_URL (ADR-0026). When http://, the resulting client
+// HUB_OCI_PUBLIC_URL. When http://, the resulting client
 // uses plain-HTTP for the upstream registry traffic. When https:// or
 // no scheme, TLS is used (oras-go's default).
 func newRemoteRepo(registryHost, repository string) (*remote.Repository, error) {
@@ -153,7 +153,7 @@ func stripScheme(in string) (host string, plainHTTP bool) {
 
 // NormalizeRegistryHost takes a registry value that may be a bare host
 // or a full URL (typically the registry_url advertised by a hub via
-// ADR-0026's discovery endpoint) and returns a bare host suitable for
+// its discovery endpoint) and returns a bare host suitable for
 // use in an OCI reference (`<host>/<repo>:<tag>`). Strips any scheme
 // and trailing slash. Exported for cmd/verify.go and cmd/publish.go,
 // which need a bare-host string for cosign and for the user-printed
@@ -199,8 +199,8 @@ const maxSignatureBlobBytes = limits.MaxPluginBlobBytes
 // dockerCredentials), so no token needs threading through this signature.
 // AttachSignatureReferrer pushes a Sigstore signature bundle to the registry as
 // an OCI 1.1 referrer of the artifact manifest identified by subjectDigest —
-// the step `cosign sign` used to perform. It is the in-process publish half of
-// ADR-0049 (grcli signs keyless without cosign). Auth flows through the same
+// the step `cosign sign` used to perform. It is the in-process publish half
+// of keyless signing (grcli signs keyless without cosign). Auth flows through the same
 // credential chain as the bundle push: the GRCLI_REGISTRY_TOKEN the publish
 // flow minted and exported.
 func AttachSignatureReferrer(ctx context.Context, registryHost, repository, subjectDigest string, bundleJSON []byte) error {
@@ -421,8 +421,8 @@ func pack(ctx context.Context, target oras.Target, tag string, in PackInput) (oc
 
 	var packOpts []bundle.PackOption
 	if in.License != "" {
-		// Standard OCI carrier for the publication license (ADR-0036
-		// decision 2). Manifest-level annotation, set only when a license
+		// Standard OCI carrier for the publication
+		// license. Manifest-level annotation, set only when a license
 		// is declared so omitting --license leaves the manifest unchanged.
 		packOpts = append(packOpts, bundle.WithAnnotations(map[string]string{
 			ocispec.AnnotationLicenses: in.License,

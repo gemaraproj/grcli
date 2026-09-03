@@ -9,7 +9,7 @@ import (
 )
 
 // TestInTotoStatement pins the DSSE payload structure the in-process signer
-// emits (ADR-0049): an in-toto Statement v1 whose single subject digest is the
+// emits: an in-toto Statement v1 whose single subject digest is the
 // manifest digest, with cosign's predicateType and empty `{}` (not null)
 // annotations/predicate. The sign→verify round-trip in internal/sigverify proves
 // this exact structure verifies; this pins the structure itself.

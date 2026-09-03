@@ -107,7 +107,7 @@ func corruptOneCacheBlob(t *testing.T, root string) {
 // project config (or GRCLI_FILE) is publish's input-file list and must NOT act
 // as cat's --file member selector.
 // TestCat_PublishFileKeyIgnored: a project ./.grcli.yaml is no longer read at
-// all (ADR-0044), so a publish-oriented `file:` key in it cannot bleed into
+// all, so a publish-oriented `file:` key in it cannot bleed into
 // cat's --file selection. cat streams the full bundle on stdout; the ignored
 // project file earns a migration warning on stderr (kept off the stdout pipe).
 func TestCat_PublishFileKeyIgnored(t *testing.T) {

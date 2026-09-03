@@ -3,7 +3,7 @@
 # === AUTH: NO GITHUB SECRET REQUIRED ===
 # Do NOT add `GRCLI_TOKEN`, a PAT, or any `secrets.*` reference to this
 # workflow. grcli uses the workflow's GitHub Actions OIDC token as its
-# credential (ADR-0032 trusted publishing). The `permissions: id-token:
+# credential (trusted publishing). The `permissions: id-token:
 # write` below is the entire auth setup — that's what lets the runtime
 # mint an OIDC token grcli can present to the hub.
 #
@@ -44,7 +44,7 @@ jobs:
           sudo install grcli /usr/local/bin/grcli
 
       # NO cosign step, and that is the point. Keyless publish
-      # signing runs IN-PROCESS via sigstore-go (ADR-0049): grcli requests the
+      # signing runs IN-PROCESS via sigstore-go: grcli requests the
       # Actions OIDC token itself, gets a Fulcio certificate, logs to Rekor and
       # attaches the signature as an OCI referrer — no external tools, no
       # secrets. Verified by a live CI smoke on 2026-08-19 from a runner with
@@ -54,7 +54,7 @@ jobs:
       # Pin a tag, never `:latest`, so a bad release cannot reach you
       # before you choose to upgrade.
 
-      # --license is REQUIRED (ADR-0037): an SPDX expression naming the terms
+      # --license is REQUIRED: an SPDX expression naming the terms
       # this catalog is published under. grcli fails before any network call
       # if it is missing, and the value is stamped into the signed, immutable
       # artifact — so set it to your catalog's real license, not this default.

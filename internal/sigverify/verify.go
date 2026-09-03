@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package sigverify is grcli's in-process Sigstore keyless-verification
-// substrate (ADR-0046). It is a MIRROR of the hub's internal/sigverify
-// (ADR-0034 decision 7 / ADR-0045) — not an import: the backend's internals
+// substrate. It is a MIRROR of the hub's internal/sigverify — not an
+// import: the backend's internals
 // aren't importable, and the zero-dependency grc-store-protocol rightly
 // excludes sigstore-go. Keeping the two in lockstep means "verifies on the hub
 // but not in grcli" (or vice versa) can only come from policy intent, never
@@ -17,7 +17,7 @@
 // WithoutIdentitiesUnsafe because it TOFU-pins (first publish accepts any valid
 // keyless cert, then the handler pins the extracted identity per coordinate).
 // grcli is the consumer — it already KNOWS the identity to expect (from the
-// --certificate-identity flag or the hub's recorded record, ADR-0045) — so it
+// --certificate-identity flag or the hub's recorded record) — so it
 // pins the SAN + issuer IN the sigstore-go policy. The cryptographic floor is
 // identical; grcli additionally enforces WHO signed.
 package sigverify
@@ -41,7 +41,7 @@ import (
 
 // Result is what a successful Verify yields: the canonical, scheme-prefixed
 // signer identity recovered from the verified certificate. It matches the hub's
-// Result.Identity byte-for-byte (grc-store-protocol/identity, ADR-0035) so a
+// Result.Identity byte-for-byte (grc-store-protocol/identity) so a
 // post-verify confirmation line names the same identity the hub recorded.
 type Result struct {
 	// Identity is the canonical keyless identity
@@ -57,7 +57,7 @@ type Result struct {
 var ErrUnsigned = errors.New("artifact is not signed")
 
 // embeddedTrustedRoot is the pinned public-good Sigstore trust root — the SAME
-// material the hub pins (ADR-0034 decision 7), which is exactly why it is no
+// material the hub pins, which is exactly why it is no
 // longer vendored here: grcli, privateer-sdk and the hub each carried a
 // byte-identical copy, so rotation was three edits and three chances to miss
 // one. It now comes from grc-store-clientkit, and refreshing it is one release
@@ -87,7 +87,7 @@ type Verifier struct {
 // certificate-identity material cmd/verify.go previously handed to cosign:
 //
 //   - Explicit --certificate-identity mode: SAN set (exact), SANRegexp empty.
-//   - Hub-lookup mode (ADR-0045): SANRegexp set (the anchored "^QuoteMeta(path)@"
+//   - Hub-lookup mode: SANRegexp set (the anchored "^QuoteMeta(path)@"
 //     pattern), SAN empty. The ref-stripped pin admits any git ref but nothing
 //     wider than the exact workflow path.
 //
@@ -133,8 +133,7 @@ func NewVerifier(timeout time.Duration) (*Verifier, error) {
 }
 
 // NewVerifierFromFile builds a verifier over a trusted_root.json read from disk
-// instead of the embedded public-good root (GRCLI_TRUSTED_ROOT, ADR-0046
-// decision 4). It serves air-gapped deployments and private Sigstore instances —
+// instead of the embedded public-good root (GRCLI_TRUSTED_ROOT). It serves air-gapped deployments and private Sigstore instances —
 // the same posture as the hub's NewSigstoreVerifierFromFile. The SCT/Rekor/
 // timestamp policy is UNCHANGED (a private Sigstore still runs a CT log); only
 // the set of trusted CAs/logs differs. An empty path is a programming error
@@ -256,7 +255,7 @@ func (v *Verifier) verifyEntity(entity verify.SignedEntity, artifactDigest strin
 		return Result{}, errors.New("verified certificate is missing OIDC issuer or SAN")
 	}
 	// The canonical signer identity comes from the shared wire-contract module
-	// (ADR-0035) — the SAME definition the hub uses — so grcli's confirmation
+	// — the SAME definition the hub uses — so grcli's confirmation
 	// names the identity in exactly the form the hub recorded.
 	return Result{
 		Identity: identity.CanonicalKeylessIdentity(cert.Issuer, cert.SubjectAlternativeName),

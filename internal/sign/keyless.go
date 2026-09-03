@@ -21,8 +21,8 @@ import (
 	sgsign "github.com/sigstore/sigstore-go/pkg/sign"
 )
 
-// In-process keyless signing (ADR-0049). This is the symmetric half of the
-// in-process VERIFY path (ADR-0046, internal/sigverify): grcli signs the
+// In-process keyless signing. This is the symmetric half of the
+// in-process VERIFY path (internal/sigverify): grcli signs the
 // pushed artifact with a short-lived Fulcio certificate obtained via the
 // runner's OIDC token, logs it in Rekor, and produces a Sigstore v0.3 bundle —
 // all with the sigstore-go library grcli already depends on for verification,

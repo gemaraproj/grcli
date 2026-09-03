@@ -45,8 +45,8 @@ Some commands shell out to external tools:
   (`publish --cosign-key`) and key-based `verify --cosign-key`. When cosign is
   used, grcli detects its version and adapts the Sigstore bundle-format flag
   (`--new-bundle-format` on 2.6–2.x, omitted on 3.x). **Keyless CI publishing and
-  all keyless `verify`/`unpack` need no external tools** — grcli signs (ADR-0049)
-  and verifies (ADR-0046) in-process against Sigstore, so the common path is just
+  all keyless `verify`/`unpack` need no external tools** — grcli signs
+  and verifies in-process against Sigstore, so the common path is just
   the `grcli` binary. https://docs.sigstore.dev/cosign/installation/
 - **`cue`** on `PATH` — `validate`. https://cuelang.org
 - **A Gemara spec checkout** — `validate`.
@@ -74,7 +74,7 @@ Run `grcli <command> --help` for the full flag list. The typical flow is
 | --- | --- |
 | `login` | Sign in to a hub via OIDC device flow; stores tokens for `publish`. |
 | `validate` | Check YAML against the Gemara spec via `cue vet`. |
-| `publish` | Pack an artifact + provenance into a signed OCI bundle, push it, and notify the hub. Requires `--license` (SPDX expression, ADR-0037). |
+| `publish` | Pack an artifact + provenance into a signed OCI bundle, push it, and notify the hub. Requires `--license` (SPDX expression). |
 | `verify` | Verify a remote bundle's Sigstore signature (keyless: in-process, no cosign) — with no trust flags, against the signer identity the hub recorded at ingest. |
 | `unpack` | Verify a remote bundle's signature (fail-closed; `--no-verify` to skip) then write its files + manifest to disk. |
 | `cat` | Print an artifact's Gemara content to stdout (no files written) — for piping into `yq`. |
@@ -88,7 +88,7 @@ grcli login
 grcli validate -f controls.yaml --spec /path/to/gemara
 
 # Publish — picks up the stored login token; signs by default.
-# --license is REQUIRED (ADR-0037) and takes an SPDX expression; publish
+# --license is REQUIRED and takes an SPDX expression; publish
 # fails before any network call without it. Use your catalog's real terms.
 # Locally you must also supply signing material: --cosign-key (below) or
 # --no-sign. Keyless signing is CI-only — see "Signing" further down.
@@ -170,7 +170,7 @@ served from the cache with **no network at all**. grc.store tags are immutable,
 so a cache hit can never be stale. The cache lives at `$GRCLI_CACHE` (default
 `os.UserCacheDir()/grcli`) and grows without bound (no GC yet). Note: a default
 `unpack` still contacts the hub/registry to *verify* the signature even on a
-content cache hit (ADR-0048); `--no-verify` restores a fully offline cache hit.
+content cache hit; `--no-verify` restores a fully offline cache hit.
 
 - `--no-cache` bypasses the cache for a single run (fresh pull, nothing stored).
 - Set `cache-enabled: false` in config (below) to disable it durably.
@@ -181,7 +181,7 @@ content cache hit (ADR-0048); `--no-verify` restores a fully offline cache hit.
 `grcli` reads config from, highest precedence first: a `--flag`, a `GRCLI_*`
 env var, and the user-global `$XDG_CONFIG_HOME/grcli/config.yaml` (falling back
 to `~/.config/grcli/config.yaml`). There is **no per-project layer**: a
-repo-local `./.grcli.yaml` is deliberately not read (ADR-0044) — a committed
+repo-local `./.grcli.yaml` is deliberately not read — a committed
 file must not be able to steer where a publish/verify tool talks — and a present
 one prints a migration warning until removed. `--config <file>` selects a single
 file and bypasses the search.
@@ -198,8 +198,7 @@ Keys (env form in parentheses):
   `https://token.actions.githubusercontent.com`; set it only for GitHub
   Enterprise, another CI provider, or an OIDC proxy.
 - `trusted-root` (`GRCLI_TRUSTED_ROOT`) — path to a `trusted_root.json` that
-  overrides the embedded Sigstore public-good trust root for keyless `verify`
-  (ADR-0046). For air-gapped deployments or a private Sigstore instance only;
+  overrides the embedded Sigstore public-good trust root for keyless `verify`. For air-gapped deployments or a private Sigstore instance only;
   unset, grcli uses its pinned embedded root.
 
 > **Registry credentials are env-only, never config keys**: set
@@ -216,7 +215,7 @@ material depends on where you run (`internal/sign.Preflight`):
 
 | Where | Signing material | cosign on `PATH`? |
 |---|---|---|
-| GitHub Actions (`GITHUB_ACTIONS=true`) | the runner's OIDC token — needs `permissions: id-token: write` | **no** — in-process, ADR-0049 |
+| GitHub Actions (`GITHUB_ACTIONS=true`) | the runner's OIDC token — needs `permissions: id-token: write` | **no** — in-process |
 | Anywhere else | `--cosign-key` (or `COSIGN_KEY`) | **yes**, ≥ 2.6.0 |
 | Either, opting out | `--no-sign` | no |
 
@@ -230,7 +229,7 @@ signing, run in GitHub Actions with `permissions: id-token: write` for
 keyless signing, or pass --no-sign to publish without provenance
 ```
 
-Keyless `verify` runs **in-process** against Sigstore (ADR-0046): no `cosign`,
+Keyless `verify` runs **in-process** against Sigstore: no `cosign`,
 no version-skew caveats, just the `grcli` binary. It embeds the pinned Sigstore
 public-good trust root, refreshed with each grcli release; for an air-gapped or
 private-Sigstore deployment, point `GRCLI_TRUSTED_ROOT` (env, or the
@@ -243,8 +242,7 @@ to `cosign` ≥ 2.6.0 — a niche publisher-shared-key path.
 ## Publishing from GitHub Actions
 
 **`grcli` in CI needs no GitHub secret, no `GRCLI_TOKEN`, no
-`secrets.*` reference, no PAT.** Do not create one. Trusted publishing
-(ADR-0032) means the workflow's GitHub OIDC token is the credential —
+`secrets.*` reference, no PAT.** Do not create one. Trusted publishing means the workflow's GitHub OIDC token is the credential —
 `grcli publish` mints it at runtime from the Actions OIDC endpoint
 that `permissions: id-token: write` enables. The hub validates the
 token's `iss` (GitHub) and `sub` (your repo/ref) against its
@@ -274,10 +272,10 @@ jobs:
       - run: |
           oras pull ghcr.io/gemaraproj/grcli:latest --platform linux/amd64
           sudo install grcli /usr/local/bin/grcli
-      # No cosign step: grcli signs keyless in-process via sigstore-go
-      # (ADR-0049), using the same OIDC identity that authorizes the push.
+      # No cosign step: grcli signs keyless in-process via sigstore-go,
+      # using the same OIDC identity that authorizes the push.
       - run: grcli publish -f controls.yaml --license Apache-2.0
-        # --license is REQUIRED (ADR-0037) — set it to your catalog's real
+        # --license is REQUIRED — set it to your catalog's real
         # terms; no `env:` block, no `with: token:`, no secrets — the
         # id-token: write above is what makes this work
 ```
@@ -287,7 +285,7 @@ The Fulcio certificate records the workflow URL as the signer identity
 The hub verifies that signature at ingest and records the (ref-stripped)
 identity, so a consumer can run `grcli verify --repository … --version …`
 with **no trust flags** and grcli will verify against the recorded identity
-(printing it, and that it came from the hub, first — ADR-0045). For an
+(printing it, and that it came from the hub, first). For an
 independent check that does not trust the hub as the identity source, a
 consumer supplies `--certificate-identity` (the workflow URL above) with the
 issuer `https://token.actions.githubusercontent.com` themselves.

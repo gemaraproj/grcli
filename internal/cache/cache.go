@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package cache is a Go-module-style on-disk cache for artifacts grcli pulls
-// (ADR-0039, extended by ADR-0042). grc.store tags are immutable (ADR-0033),
+// Package cache is a Go-module-style on-disk cache for artifacts grcli
+// pulls. grc.store tags are immutable,
 // so a coordinate (host, namespace, id, version) maps to fixed bytes forever —
 // a cache hit can never be stale, which is what makes this sound. Entries are
 // host-namespaced so prod, staging, and self-hosted hubs stay separate. (Caveat:
@@ -31,8 +31,8 @@ import (
 )
 
 // layoutVersion namespaces the on-disk layout so a format change can coexist
-// with old entries instead of misreading them. v2 (ADR-0042) stores a full
-// bundle; v1 entries (single body, ADR-0039) are simply never read.
+// with old entries instead of misreading them. v2 stores a full
+// bundle; v1 entries (single body) are simply never read.
 const layoutVersion = "v2"
 
 // File is one artifact file in a cached bundle. Data is held separately from the
@@ -64,7 +64,7 @@ type Entry struct {
 	// SourceURL is the reference URL this entry was resolved from, if any.
 	SourceURL string
 	// Verified records whether the bytes were signature-verified. Always false
-	// for now — verify-on-pull is deferred (ADR-0039 amendment) — but persisted
+	// for now — verify-on-pull is deferred — but persisted
 	// so a later pass can upgrade entries in place.
 	Verified bool
 }

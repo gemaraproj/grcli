@@ -126,7 +126,7 @@ func TestGetDetectsCorruptionAtNonZeroIndex(t *testing.T) {
 	}
 }
 
-// TestV1EntriesAreIgnored guards the "no migration" decision (ADR-0042 dec. 3):
+// TestV1EntriesAreIgnored guards the "no migration" decision:
 // a v1-shaped entry on disk must not be read at the v2 coordinate. This is the
 // invariant the whole layoutVersion bump rests on.
 func TestV1EntriesAreIgnored(t *testing.T) {

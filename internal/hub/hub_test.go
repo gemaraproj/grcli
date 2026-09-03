@@ -144,7 +144,7 @@ func TestGetCatalog_TypedSentinels(t *testing.T) {
 	}
 }
 
-// TestGetVersionBody covers the reference-resolution body fetch (ADR-0039):
+// TestGetVersionBody covers the reference-resolution body fetch:
 // the 200 path returns the body and the manifest-digest header, and the
 // typed 404/410 sentinels surface for absent/yanked versions.
 func TestGetVersionBody(t *testing.T) {

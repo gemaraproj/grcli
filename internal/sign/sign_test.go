@@ -50,7 +50,7 @@ func TestPreflight(t *testing.T) {
 		}
 	})
 
-	t.Run("CI keyless needs NO cosign on PATH (ADR-0049)", func(t *testing.T) {
+	t.Run("CI keyless needs NO cosign on PATH", func(t *testing.T) {
 		cosignAbsent(t)
 		t.Setenv("GITHUB_ACTIONS", "true")
 		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "tok")
@@ -124,9 +124,9 @@ func recordingCosign(t *testing.T, version string) string {
 }
 
 // TestSignBundleFormatByCosignVersion pins that grcli selects the Sigstore
-// bundle-as-referrer format (ADR-0035) correctly across the cosign range on the
-// KEY-based path — the only path that still shells out to cosign (ADR-0049 moved
-// keyless in-process, so it no longer invokes cosign at all). It passes
+// bundle-as-referrer format correctly across the cosign range on the
+// KEY-based path — the only path that still shells out to cosign (keyless
+// moved in-process, so it no longer invokes cosign at all). It passes
 // --new-bundle-format on cosign 2.6–2.x and omits it on ≥ 3.0.0 (where the
 // bundle format is the default and the flag is deprecated).
 func TestSignBundleFormatByCosignVersion(t *testing.T) {

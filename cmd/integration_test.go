@@ -93,8 +93,8 @@ func TestPublishUnpackRoundtrip_SinglePolicy(t *testing.T) {
 	require.Contains(t, provenance, "runDetails")
 }
 
-// TestPublish_License_Valid_StampsCanonicalAnnotation covers ADR-0036
-// decisions 1, 2, and 4 on the happy path: a valid --license (given in
+// TestPublish_License_Valid_StampsCanonicalAnnotation covers the license
+// happy path: a valid --license (given in
 // non-canonical casing) is canonicalized and stamped as the standard OCI
 // manifest annotation org.opencontainers.image.licenses. --dry-run keeps it
 // off the network; we read the annotation back off the local OCI manifest.
@@ -128,8 +128,8 @@ func TestPublish_License_CompoundExpression(t *testing.T) {
 	require.Equal(t, "MIT OR Apache-2.0", ann["org.opencontainers.image.licenses"])
 }
 
-// TestPublish_License_Invalid_RejectedBeforePush covers ADR-0036 decision 4's
-// strict gate: a malformed/unknown --license aborts the publish and writes NO
+// TestPublish_License_Invalid_RejectedBeforePush covers the strict license
+// gate: a malformed/unknown --license aborts the publish and writes NO
 // OCI output, even under --dry-run (the strict check runs before pack).
 func TestPublish_License_Invalid_RejectedBeforePush(t *testing.T) {
 	cases := []struct {
@@ -167,8 +167,8 @@ func TestPublish_License_Invalid_RejectedBeforePush(t *testing.T) {
 	}
 }
 
-// TestPublish_License_Omitted_RejectedBeforePush covers ADR-0037 decision 1:
-// --license is now REQUIRED. Omitting it aborts the publish — before any pack
+// TestPublish_License_Omitted_RejectedBeforePush covers the required-license
+// rule: --license is REQUIRED. Omitting it aborts the publish — before any pack
 // or push, even under --dry-run — with the distinct "is required" error (NOT
 // the "invalid --license" malformed-value message) and writes NO OCI output.
 func TestPublish_License_Omitted_RejectedBeforePush(t *testing.T) {
@@ -206,8 +206,8 @@ func TestPublish_License_Whitespace_RejectedBeforePush(t *testing.T) {
 }
 
 // TestPublish_License_LicenseRef_Accepted confirms a LicenseRef- token (the
-// custom/proprietary escape hatch named in the required-license error and
-// ADR-0037) is accepted and stamped verbatim.
+// custom/proprietary escape hatch named in the required-license error) is
+// accepted and stamped verbatim.
 func TestPublish_License_LicenseRef_Accepted(t *testing.T) {
 	workdir := isolatedWorkdir(t)
 	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
@@ -433,7 +433,7 @@ func readManifest(t *testing.T, path string) map[string]any {
 // readOCIManifestAnnotations reads the single manifest from an OCI image
 // layout directory and returns its manifest-level annotations map. It walks
 // index.json -> the manifest blob (addressed by digest), which is where
-// go-gemara's bundle.WithAnnotations lands the publication license (ADR-0036),
+// go-gemara's bundle.WithAnnotations lands the publication license,
 // as opposed to bundle.json (the config blob) which readManifest covers.
 func readOCIManifestAnnotations(t *testing.T, layoutDir string) map[string]any {
 	t.Helper()

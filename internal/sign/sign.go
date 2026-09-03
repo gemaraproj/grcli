@@ -4,8 +4,7 @@
 //
 // Keyless signing (the CI trusted-publishing path) runs IN-PROCESS via
 // sigstore-go — the same library internal/sigverify uses to verify — so
-// publishing needs no cosign (ADR-0049, symmetric to ADR-0046's in-process
-// verify). See keyless.go. Key-based signing (--cosign-key) still shells out to
+// publishing needs no cosign (symmetric to the in-process verify). See keyless.go. Key-based signing (--cosign-key) still shells out to
 // cosign, the one remaining path that needs it on PATH.
 package sign
 
@@ -37,7 +36,7 @@ const (
 // 1.1 referrer of the manifest, instead of the legacy tag-based `sha256-….sig`.
 // This converges grc.store on one signature format across artifact types: it is
 // the format the hub's plugin verifier already expects and that pvtr already
-// produces (ADR-0034 dec. 7, ADR-0035).
+// produces.
 //
 // It is EXPORTED so the verify side (cmd/verify.go) references the same constant
 // — a bundle-signed artifact is verified with `cosign verify --new-bundle-format`
@@ -168,7 +167,7 @@ type Options struct {
 	PlainHTTP bool
 
 	// RegistryHost, Repository, and ManifestDigest are the coordinates the
-	// keyless in-process path (ADR-0049) needs: it signs ManifestDigest and
+	// keyless in-process path needs: it signs ManifestDigest and
 	// attaches the bundle as an OCI referrer at RegistryHost/Repository. Unset
 	// for key mode (cosign resolves the reference itself). RegistryHost keeps
 	// any http(s):// scheme so the oras push targets the right transport.
@@ -202,7 +201,7 @@ func Preflight(ctx context.Context, opts Options) error {
 	}
 	switch {
 	case os.Getenv("GITHUB_ACTIONS") == "true":
-		// Keyless in-process (ADR-0049): NO cosign needed — grcli requests the
+		// Keyless in-process: NO cosign needed — grcli requests the
 		// GHA OIDC token itself and signs via sigstore-go. Requires
 		// `permissions: id-token: write` (which populates the request env).
 		if os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN") == "" {
@@ -253,7 +252,7 @@ func Sign(ctx context.Context, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("sign: %w", err)
 	}
 
-	// Keyless in CI runs fully in-process (ADR-0049): sign the manifest digest
+	// Keyless in CI runs fully in-process: sign the manifest digest
 	// via sigstore-go and attach the bundle as an OCI referrer — no cosign.
 	if os.Getenv("GITHUB_ACTIONS") == "true" {
 		if opts.ManifestDigest == "" || opts.RegistryHost == "" || opts.Repository == "" {

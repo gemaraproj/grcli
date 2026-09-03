@@ -10,7 +10,7 @@ import (
 )
 
 // ensureRegistryToken makes grcli authenticate to the bearer-auth
-// registry (ADR-0031) without the caller managing registry credentials:
+// registry without the caller managing registry credentials:
 // it fetches a repository-scoped Distribution token from the hub's
 // /v2/token endpoint and exports it as GRCLI_REGISTRY_TOKEN, which both
 // the oras push/pull path (internal/registry.dockerCredentials) and the

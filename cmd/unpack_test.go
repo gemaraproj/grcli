@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-// TestPlanUnpackVerify pins the pre-network gating decision (ADR-0048): remote
+// TestPlanUnpackVerify pins the pre-network gating decision: remote
 // unpack verifies by default, --no-verify opts out, and a local --source layout
 // can never be verified (and that reason wins even when --no-verify is also set).
 func TestPlanUnpackVerify(t *testing.T) {

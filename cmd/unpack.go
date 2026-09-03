@@ -28,17 +28,17 @@ import (
 const (
 	flagSource = "source"
 	// flagVersion is the published artifact's metadata.version, which is
-	// also its OCI tag (ADR-0033 guarantees they're the same). Shared with
+	// also its OCI tag (the hub guarantees they're the same). Shared with
 	// verify.go.
 	flagVersion = "version"
 
-	// Reference-resolution flags (ADR-0039).
+	// Reference-resolution flags.
 	flagWithImports    = "with-imports"
 	flagWithReferences = "with-references"
 	flagNoCache        = "no-cache"
 
-	// flagNoVerify opts out of the default pre-unpack signature verification
-	// (ADR-0048). flagCertIdentity / flagCertOIDCIssuer are defined in verify.go
+	// flagNoVerify opts out of the default pre-unpack signature
+	// verification. flagCertIdentity / flagCertOIDCIssuer are defined in verify.go
 	// and reused here so an unpack can assert an identity instead of trusting the
 	// hub-recorded one.
 	flagNoVerify = "no-verify"
@@ -56,7 +56,7 @@ The source can be a local OCI image layout (--source, the shape produced
 by 'grcli publish --dry-run') or a remote registry discovered from the
 hub (--url plus --repository). Exactly one of --source / --url must be set.
 
-Verification (ADR-0048): a remote (--url) unpack VERIFIES the artifact's
+Verification: a remote (--url) unpack VERIFIES the artifact's
 Sigstore signature in-process before writing anything, and fails closed —
 an unsigned, mis-signed, or unverifiable artifact is refused and no files
 are written. This is the same check as 'grcli verify': zero-flag against
@@ -65,7 +65,7 @@ assert the signer yourself and bypass the hub. Pass --no-verify to write
 without verifying (INSECURE). A local --source layout has no registry
 signature to check, so it is always written without verification.
 
-Caching (ADR-0042): a remote (--url) fetch is served from a global on-disk
+Caching: a remote (--url) fetch is served from a global on-disk
 cache when the same namespace/id/version has been fetched before — a cache
 hit for the artifact bytes needs no network. grc.store tags are immutable,
 so a hit can never be stale. (Best-effort exception: resolving references
@@ -80,7 +80,7 @@ Registry auth flows through the same Docker credential chain and
 GRCLI_REGISTRY_USERNAME / GRCLI_REGISTRY_PASSWORD / GRCLI_REGISTRY_TOKEN
 overrides as 'grcli publish'.
 
-Resolving references (ADR-0039): with --with-imports (the artifact's
+Resolving references: with --with-imports (the artifact's
 'imports') or --with-references (every mapping reference it declares),
 grcli also pulls the referenced grc.store artifacts into references/
 <category>/<ns>/<id>@<version>, alongside a references/index.json record.
@@ -119,7 +119,7 @@ Examples:
 	flags.Bool(flagWithImports, false, "also resolve and pull the artifact's `imports` references from the hub (requires --url)")
 	flags.Bool(flagWithReferences, false, "also resolve and pull ALL of the artifact's mapping references from the hub (requires --url); superset of --with-imports")
 	flags.Bool(flagNoCache, false, "bypass the local artifact cache for this run (primary + references); set cache-enabled: false in config to disable it durably")
-	flags.Bool(flagNoVerify, false, "write without verifying the artifact's signature (INSECURE; ADR-0048) — the default verifies and fails closed")
+	flags.Bool(flagNoVerify, false, "write without verifying the artifact's signature (INSECURE) — the default verifies and fails closed")
 	flags.String(flagCertIdentity, "", "verify against this exact signer identity instead of the hub-recorded one (bypasses the hub lookup)")
 	flags.String(flagCertOIDCIssuer, "", "expected OIDC issuer for --certificate-identity (default: https://token.actions.githubusercontent.com)")
 
@@ -143,7 +143,7 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 
 	// Capture whether the user supplied an explicit registry credential BEFORE
 	// any pull mints and exports one. Reference resolution mints a fresh token
-	// per referenced repository (ADR-0031 tokens are per-namespace), and must
+	// per referenced repository (registry tokens are per-namespace), and must
 	// only do so when the user hasn't provided their own credential — which is
 	// no longer detectable once resolveBundle has exported a primary token.
 	userCreds := userSuppliedRegistryCredential()
@@ -155,7 +155,7 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 		return err
 	}
 
-	// Verify the signature BEFORE writing anything (ADR-0048). Fail closed:
+	// Verify the signature BEFORE writing anything. Fail closed:
 	// a rejected artifact returns here, so os.MkdirAll/writeBundle never run
 	// and the output directory is not created.
 	switch planUnpackVerify(v.GetString(flagSource), v.GetBool(flagNoVerify)) {
@@ -186,7 +186,7 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 }
 
 // unpackVerifyPlan is how unpack handles signature verification for one
-// invocation, decided from the flags before any network work (ADR-0048).
+// invocation, decided from the flags before any network work.
 type unpackVerifyPlan int
 
 const (
@@ -212,7 +212,7 @@ func planUnpackVerify(source string, noVerify bool) unpackVerifyPlan {
 }
 
 // verifyBeforeUnpack verifies the artifact's Sigstore signature in-process
-// (the ADR-0046 path) BEFORE any content is written (ADR-0048). It fails closed:
+// (the same path verify uses) BEFORE any content is written. It fails closed:
 // an unsigned, mis-signed, or otherwise unverifiable artifact returns an error
 // and unpack writes nothing. It reuses verify's exact policy resolution, so
 // unpack and `grcli verify` apply identical trust — zero-flag against the
@@ -241,7 +241,7 @@ func verifyBeforeUnpack(ctx context.Context, v *viper.Viper, out io.Writer) erro
 	res, err := verifier.Verify(ctx, bundleJSON, artifactDigest, policy.identityPolicy())
 	if errors.Is(err, sigverify.ErrUnsigned) {
 		return fmt.Errorf("%s:%s has no signature in the registry — refusing to unpack unverified content "+
-			"(re-run with --no-verify to override; ADR-0048)", policy.repository, policy.version)
+			"(re-run with --no-verify to override)", policy.repository, policy.version)
 	}
 	if err != nil {
 		return fmt.Errorf("signature verification failed — refusing to unpack: %w", err)
@@ -340,7 +340,7 @@ type refIndexEntry struct {
 
 // resolveReferences walks the unpacked artifact's mapping references and pulls
 // the ones that point at the targeted hub into references/<category>/ alongside
-// the primary (ADR-0039). It is best-effort: an unrecognized host, a not-found,
+// the primary. It is best-effort: an unrecognized host, a not-found,
 // or a fetch error is reported and skipped, never fatal.
 func resolveReferences(ctx context.Context, v *viper.Viper, mode refs.Mode, b *bundle.Bundle, output string, userCreds bool, out io.Writer) error {
 	url := v.GetString(flagURL)
@@ -376,7 +376,7 @@ func resolveReferences(ctx context.Context, v *viper.Viper, mode refs.Mode, b *b
 	}
 	client := hub.New(url, "")
 
-	// References pulled from the registry (ADR-0042 decision 5) need the registry
+	// References pulled from the registry need the registry
 	// host, discovered lazily on the FIRST cache miss so a fully-cached run stays
 	// offline. Memoized: at most one discovery per unpack, and a failure only
 	// skips the references that actually need a pull, not the cached ones.
@@ -455,7 +455,7 @@ func resolveReferences(ctx context.Context, v *viper.Viper, mode refs.Mode, b *b
 		}
 
 		// A reference is a full bundle, written to its own directory (like the
-		// primary unpack): the artifact file(s) plus bundle.json (ADR-0042).
+		// primary unpack): the artifact file(s) plus bundle.json.
 		refDir := filepath.Join("references", s.Category, ns, fmt.Sprintf("%s@%s", id, s.Version))
 		if err := writeReference(output, refDir, entry, out); err != nil {
 			fmt.Fprintf(out, "  - skip [%s] %s: %v\n", s.Category, coord, err)
@@ -509,9 +509,9 @@ type fetchRefArgs struct {
 
 // fetchReference returns a reference as a full bundle, from the cache when
 // present and uncorrupted, otherwise by pulling the whole bundle from the
-// registry (ADR-0042 decision 5) and, unless --no-cache, caching it. The
+// registry and, unless --no-cache, caching it. The
 // per-version license is read from the hub for the license-mismatch warning and
-// recorded on the entry. Verification is deferred (ADR-0039 amendment), so the
+// recorded on the entry. Verification is deferred, so the
 // entry is recorded as unverified.
 func fetchReference(ctx context.Context, a fetchRefArgs, out io.Writer) (*cache.Entry, error) {
 	if a.cache != nil {
@@ -558,7 +558,7 @@ func fetchReference(ctx context.Context, a fetchRefArgs, out io.Writer) (*cache.
 	if err != nil {
 		return nil, err
 	}
-	// Reference resolution is direct-only (ADR-0039): if the referenced bundle
+	// Reference resolution is direct-only: if the referenced bundle
 	// carries its own transitive imports, we neither materialize nor cache them
 	// (the v2 entry stores Files + manifest only). Say so rather than dropping
 	// them silently.
@@ -604,7 +604,7 @@ func referenceLicense(ctx context.Context, client *hub.Client, ns, id, version s
 
 // noteDroppedReferenceImports warns that a referenced bundle carries its own
 // transitive imports, which grcli does not materialize: reference resolution is
-// direct-only (ADR-0039), and the v2 cache stores Files + manifest only.
+// direct-only, and the v2 cache stores Files + manifest only.
 func noteDroppedReferenceImports(out io.Writer, ns, id, version string, n int) {
 	fmt.Fprintf(out, "  ! %s/%s@%s carries %d transitive import(s) — not materialized (direct-only resolution)\n",
 		ns, id, version, n)

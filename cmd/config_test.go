@@ -46,8 +46,8 @@ func TestConfig_GlobalDisablesCache(t *testing.T) {
 	require.False(t, cachingEnabled(loadedViper(t)), "user-global cache-enabled:false must disable caching")
 }
 
-// TestConfig_ProjectFileIgnored: a repo-local ./.grcli.yaml is no longer read
-// (ADR-0044), so it cannot override the user-global file — the global setting
+// TestConfig_ProjectFileIgnored: a repo-local ./.grcli.yaml is no longer
+// read, so it cannot override the user-global file — the global setting
 // stands even when a project file says otherwise.
 func TestConfig_ProjectFileIgnored(t *testing.T) {
 	isolatedWorkdir(t)
@@ -95,7 +95,7 @@ func TestConfig_ExplicitFileBypassesSearch(t *testing.T) {
 }
 
 // TestWarnIgnoredConfig: warn whenever a config file sits at a location grcli
-// no longer reads — the per-project ./.grcli.yaml (ADR-0044) or the pre-0043
+// no longer reads — the per-project ./.grcli.yaml or the legacy
 // home/XDG dotfiles — and stay silent when there are none. Unlike the old
 // legacy check, a present project file warns even when a user-global file
 // exists, because the project file no longer merges over it.

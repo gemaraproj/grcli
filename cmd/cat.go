@@ -31,7 +31,7 @@ plus --version.
 
 A single-file bundle prints that file verbatim. A bundle with several files
 prints them as a YAML multi-document stream (--- separated); use --file <name>
-to print just one. Caching behaves exactly as for 'grcli unpack' (ADR-0042):
+to print just one. Caching behaves exactly as for 'grcli unpack':
 a remote fetch is served from the on-disk cache when warm; --no-cache forces a
 fresh pull. Cache diagnostics go to stderr so stdout stays pipe-clean.
 
@@ -75,7 +75,7 @@ func runCat(cmd *cobra.Command, v *viper.Viper) error {
 	if err != nil {
 		return err
 	}
-	// Reference resolution is unpack's job (ADR-0042), and the v2 cache never
+	// Reference resolution is unpack's job, and the v2 cache never
 	// stores Imports — but a --source layout can carry them. Never drop content
 	// silently: cat prints Files only, so say what was omitted (on stderr).
 	if len(b.Imports) > 0 {

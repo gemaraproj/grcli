@@ -13,7 +13,7 @@ import (
 // at hub.grc.store, and asking them to remember the URL every time
 // helps nobody. Override per invocation with `--url <other>` or per
 // shell with `GRCLI_URL`. The discovery endpoint that backs `--url`
-// (ADR-0026) is served by the hub at this URL, not the frontend at
+// is served by the hub at this URL, not the frontend at
 // grc.store/ — the frontend Worker does not proxy /.well-known/ through.
 const defaultURL = "https://hub.grc.store"
 

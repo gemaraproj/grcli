@@ -11,7 +11,7 @@ import (
 	"github.com/gemaraproj/grcli/internal/sign"
 )
 
-// TestVerifyEntity_AcceptsInTotoDSSE is the ADR-0049 sign→verify round-trip: it
+// TestVerifyEntity_AcceptsInTotoDSSE is the keyless sign→verify round-trip: it
 // proves the EXACT in-toto DSSE payload grcli's in-process signer emits
 // (sign.InTotoStatement) verifies against this verifier's WithArtifactDigest
 // subject check. Since the hub mirrors internal/sigverify, a bundle grcli

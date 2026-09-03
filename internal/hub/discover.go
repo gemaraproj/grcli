@@ -17,7 +17,7 @@ import (
 )
 
 // Discovery is the GET /.well-known/grc-store-configuration document. It is aliased to the
-// shared wire-contract type (ADR-0035) — the same definition the hub serves and
+// shared wire-contract type — the same definition the hub serves and
 // pvtr consumes — so the three can't drift. The CI-audience field is named
 // CIAudience on the shared type (was CIOIDCAudience here).
 type Discovery = discovery.Document

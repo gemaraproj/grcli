@@ -20,14 +20,14 @@ import (
 // resolveBundle fetches the primary artifact bundle from either a local OCI
 // layout (--source) or the remote registry discovered from the hub (--url +
 // --repository + --version). It is the shared fetch stage for `unpack` and
-// `cat` (ADR-0042 decision 4): both run this identical resolve-and-cache
+// `cat`: both run this identical resolve-and-cache
 // pipeline and then diverge only in how they render the returned bundle.
 //
 // Remote fetches consult the on-disk cache (unless caching is disabled) keyed
 // by the same (host, ns, id, version) coordinate reference resolution uses, so
 // a primary and a reference to the same artifact share one entry. The cache is
 // checked BEFORE hub discovery, so a cache hit needs no network at all
-// (ADR-0042: served offline). --source reads are local bytes and never cached.
+// (served offline). --source reads are local bytes and never cached.
 //
 // diag receives human-readable cache diagnostics (never artifact content), so a
 // caller that emits machine-readable content on stdout — `cat` — must pass a
@@ -88,8 +88,8 @@ func resolveBundle(ctx context.Context, v *viper.Viper, diag io.Writer) (b *bund
 		}
 	}
 
-	// Cache miss: discover the registry, mint a token (ADR-0031 requires one
-	// even for public reads), and pull.
+	// Cache miss: discover the registry, mint a token (the registry requires
+	// one even for public reads), and pull.
 	d, derr := hub.Discover(ctx, url)
 	if derr != nil {
 		return nil, "", fmt.Errorf("hub discovery: %w", derr)
@@ -121,7 +121,7 @@ func resolveBundle(ctx context.Context, v *viper.Viper, diag io.Writer) (b *bund
 }
 
 // cachingEnabled reports whether the artifact cache should be used: the durable
-// cache-enabled preference (ADR-0043, default true) AND the absence of the
+// cache-enabled preference (default true) AND the absence of the
 // per-invocation --no-cache flag. Either one off disables caching.
 func cachingEnabled(v *viper.Viper) bool {
 	return v.GetBool(flagCacheEnabled) && !v.GetBool(flagNoCache)
@@ -167,7 +167,7 @@ func entryFromBundle(b *bundle.Bundle, license, sourceURL string) (cache.Entry, 
 // putBundle writes a freshly-pulled primary bundle to the cache. A cache write
 // failure is non-fatal (the pull already succeeded). A bundle carrying the
 // dormant Imports slot is not cached: the v2 entry format stores Files +
-// manifest only (ADR-0042), so caching such a bundle would silently drop the
+// manifest only, so caching such a bundle would silently drop the
 // imports on the next hit — better to leave it uncached and re-pull.
 func putBundle(c *cache.Cache, host, ns, id, version string, b *bundle.Bundle, diag io.Writer) {
 	if len(b.Imports) > 0 {
