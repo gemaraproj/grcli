@@ -313,6 +313,22 @@ func TestResolveVerifyPolicy_HubLookup(t *testing.T) {
 		require.Equal(t, "keyless identity from hub record: "+canonical+", issuer "+issuer, policy.modeDescription())
 	})
 
+	t.Run("an interactive (email) hub identity is pinned exactly, not as a workflow regexp", func(t *testing.T) {
+		// A laptop keyless publish signs with the public-good Sigstore issuer
+		// and an email SAN. There is no '@<ref>' suffix to admit, and the old
+		// '^…@' regexp could never match it (the SAN ends right after the
+		// address), so the record becomes an exact SAN pin.
+		const issuer = "https://github.com/login/oauth"
+		const email = "21176439+someone@users.noreply.github.com"
+		canonical := "keyless:" + issuer + "#" + email
+
+		srv := hubLookupServer(t, canonical, nil)
+		policy, err := resolveVerifyPolicy(context.Background(), baseViper(srv.URL))
+		require.NoError(t, err)
+		require.Equal(t, sigverify.IdentityPolicy{SAN: email, Issuer: issuer}, policy.identityPolicy())
+		require.Empty(t, policy.identityRegexp)
+	})
+
 	t.Run("hub record without a signer identity is a clear, actionable error", func(t *testing.T) {
 		srv := hubLookupServer(t, "", nil)
 		_, err := resolveVerifyPolicy(context.Background(), baseViper(srv.URL))

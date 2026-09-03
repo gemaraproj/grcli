@@ -398,12 +398,26 @@ func resolveHubIdentity(ctx context.Context, url, repository string, policy *ver
 	}
 	policy.issuer = issuer
 	policy.hubIdentity = catalog.SignerIdentity
+	if !isWorkflowIdentity(workflowPath) {
+		// An interactive (email) or other non-workflow SAN carries no
+		// '@<ref>' suffix, so the hub record IS the SAN: pin it exactly.
+		policy.identity = workflowPath
+		return nil
+	}
 	// The pin is ref-stripped, so admit any git ref by matching the exact
 	// workflow path followed by cosign's SAN '@<ref>' suffix. QuoteMeta and the
 	// '^...@' anchor are load-bearing: they must never widen beyond this one
 	// workflow path (e.g. a longer sibling path or an org-wide match).
 	policy.identityRegexp = "^" + regexp.QuoteMeta(workflowPath) + "@"
 	return nil
+}
+
+// isWorkflowIdentity reports whether a hub-recorded identity path is a CI
+// workflow URL (GitHub Actions SANs are "<workflow-url>@<ref>", and the hub
+// strips the ref) as opposed to an interactive identity such as an email,
+// which the hub records verbatim.
+func isWorkflowIdentity(path string) bool {
+	return strings.HasPrefix(path, "https://") || strings.HasPrefix(path, "http://")
 }
 
 // parseKeylessIdentity splits a hub-recorded canonical signer identity into
