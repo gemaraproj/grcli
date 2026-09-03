@@ -1,0 +1,67 @@
+# Sample GitHub Actions workflow: publish a grc.store catalog with grcli.
+#
+# === AUTH: NO GITHUB SECRET REQUIRED ===
+# Do NOT add `GRCLI_TOKEN`, a PAT, or any `secrets.*` reference to this
+# workflow. grcli uses the workflow's GitHub Actions OIDC token as its
+# credential (ADR-0032 trusted publishing). The `permissions: id-token:
+# write` below is the entire auth setup — that's what lets the runtime
+# mint an OIDC token grcli can present to the hub.
+#
+# Prerequisite (one-time, by an org admin on the hub — NOT in your repo):
+# add this repository (owner/repo) as a Trusted CI publisher for the
+# target namespace, optionally pinned to a single git ref. Without that
+# binding the hub returns 403; adding a GitHub secret will not fix it.
+#
+# Copy this into .github/workflows/ in your catalog repo and adjust the
+# file path, the --license, the --url, and the trigger to taste.
+
+name: Publish catalog
+
+on:
+  push:
+    branches: [main]
+    paths: ['controls.yaml']      # publish only when the catalog changes
+  workflow_dispatch: {}            # allow manual runs
+
+permissions:
+  contents: read
+  id-token: write                  # issue the workflow OIDC token
+                                   # (hub auth + keyless signing)
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fetch the pre-built grcli binary from the public GHCR artifact.
+      # No token needed (the package is public). Pin to a released tag.
+      # v2: https://github.com/oras-project/setup-oras/releases/tag/v2.0.0
+      - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
+      - name: Install grcli
+        run: |
+          oras pull ghcr.io/gemaraproj/grcli:v0.6.0 --platform linux/amd64
+          sudo install grcli /usr/local/bin/grcli
+
+      # NO cosign step, and that is the point. As of v0.6.0 keyless publish
+      # signing runs IN-PROCESS via sigstore-go (ADR-0049): grcli requests the
+      # Actions OIDC token itself, gets a Fulcio certificate, logs to Rekor and
+      # attaches the signature as an OCI referrer — no external tools, no
+      # secrets. Verified by a live CI smoke on 2026-08-19 from a runner with
+      # no cosign on PATH. cosign is still needed ONLY for the `--cosign-key`
+      # (key-based) path, which this example does not use.
+      #
+      # Pin a tag, never `:latest`. v0.5.1 shipped a broken signing path and
+      # anything tracking `:latest` inherited it; the publishers that pinned
+      # were unaffected. Note the org move: v0.6.0+ live at
+      # ghcr.io/gemaraproj/grcli, tags <= v0.5.1 at ghcr.io/revanite-io/grcli.
+
+      # --license is REQUIRED (ADR-0037): an SPDX expression naming the terms
+      # this catalog is published under. grcli fails before any network call
+      # if it is missing, and the value is stamped into the signed, immutable
+      # artifact — so set it to your catalog's real license, not this default.
+      - name: Publish
+        run: |
+          grcli publish -f controls.yaml \
+            --license Apache-2.0 \
+            --url https://hub.grc.store
