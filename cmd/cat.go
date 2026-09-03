@@ -29,9 +29,9 @@ The source can be a local OCI image layout (--source) or a remote registry
 discovered from the hub (--url plus --repository). Exactly one must be set,
 plus --version.
 
-A single-file bundle prints that file verbatim. A bundle with several files
-prints them as a YAML multi-document stream (--- separated); use --file <name>
-to print just one. Caching behaves exactly as for 'grcli unpack':
+The bundle's source artifact is printed verbatim; --file <name> must name it
+(imports are never part of cat's output). Caching behaves exactly as for
+'grcli unpack':
 a remote fetch is served from the on-disk cache when warm; --no-cache forces a
 fresh pull. Cache diagnostics go to stderr so stdout stays pipe-clean.
 
