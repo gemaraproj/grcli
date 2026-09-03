@@ -15,6 +15,7 @@ import (
 	"oras.land/oras-go/v2/content/memory"
 	"oras.land/oras-go/v2/registry"
 
+	ckbundle "github.com/gemaraproj/grc-store-clientkit/bundle"
 	"github.com/gemaraproj/grcli/internal/digest"
 )
 
@@ -70,27 +71,24 @@ func attachSignature(t *testing.T, store *memory.Store, subject ocispec.Descript
 	})
 }
 
-// TestPackSignatureReferrer_StampsSigstoreBundle exercises the real pack/attach
-// path. It is the regression guard for a keyless-publish failure where the
-// referrer was packed with artifactType mediatype.CosignSignReferrer, which is
-// a URL rather than an RFC 6838 media type, so oras.PackManifest rejected it
-// ("invalid artifactType format") before any network I/O — deterministically,
-// on every keyless publish. Asserting the stamp is SigstoreBundle also pins the write side
-// to the type every hub generation accepts at ingest.
-func TestPackSignatureReferrer_StampsSigstoreBundle(t *testing.T) {
+// TestDiscoverSignatureBundle_ReadsClientkitAttach is the producer↔consumer
+// contract with the shared publisher: what grc-store-clientkit's AttachReferrer
+// stamps (artifactType + layer mediatype.SigstoreBundle) is exactly what this
+// discovery reads back. The write side used to live here; this pins that moving
+// it did not change the bytes on the registry.
+func TestDiscoverSignatureBundle_ReadsClientkitAttach(t *testing.T) {
 	store := memory.New()
 	subject := subjectManifest(t, store)
 	want := []byte(`{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json","the":"bundle"}`)
 
-	require.NoError(t, packSignatureReferrer(context.Background(), store, subject, want))
+	require.NoError(t, ckbundle.AttachReferrer(context.Background(), store, subject, mediatype.SigstoreBundle, want))
+	// A provenance referrer beside it must NOT be picked up as the signature.
+	require.NoError(t, ckbundle.AttachReferrer(context.Background(), store, subject, ckbundle.ProvenanceArtifactType, []byte(`{"the":"provenance"}`)))
 
 	refs, err := registry.Referrers(context.Background(), store, subject, "")
 	require.NoError(t, err)
-	require.Len(t, refs, 1)
-	require.Equal(t, mediatype.SigstoreBundle, refs[0].ArtifactType)
+	require.Len(t, refs, 2)
 
-	// Round-trip: what we attach is what our own discovery (and the hub's
-	// ociref, which accepts the same pair) reads back.
 	got, err := discoverSignatureBundle(context.Background(), store, subject)
 	require.NoError(t, err)
 	require.Equal(t, want, got)

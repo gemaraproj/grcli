@@ -8,12 +8,12 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/testing/ca"
 	"github.com/stretchr/testify/require"
 
-	"github.com/gemaraproj/grcli/internal/sign"
+	"github.com/gemaraproj/grc-store-clientkit/keyless"
 )
 
 // TestVerifyEntity_AcceptsInTotoDSSE is the keyless sign→verify round-trip: it
 // proves the EXACT in-toto DSSE payload grcli's in-process signer emits
-// (sign.InTotoStatement) verifies against this verifier's WithArtifactDigest
+// (keyless.Statement) verifies against this verifier's WithArtifactDigest
 // subject check. Since the hub mirrors internal/sigverify, a bundle grcli
 // produces in-process is accepted by both — so dropping cosign does not change
 // what the registry considers verifiable.
@@ -25,7 +25,7 @@ func TestVerifyEntity_AcceptsInTotoDSSE(t *testing.T) {
 	// The digest carried in the statement's subject == what the verifier is
 	// asked to confirm (the pushed manifest's digest).
 	manifestDigest := digestOf([]byte("the-pushed-manifest-bytes"))
-	statement, err := sign.InTotoStatement(manifestDigest)
+	statement, err := keyless.Statement(manifestDigest, "", nil)
 	require.NoError(t, err)
 
 	entity, err := vs.Attest(ghaSANRef, ghaIssuer, statement)
@@ -44,7 +44,7 @@ func TestVerifyEntity_RejectsInTotoWrongSubject(t *testing.T) {
 	require.NoError(t, err)
 	v := newTestVerifier(t, vs)
 
-	statement, err := sign.InTotoStatement(digestOf([]byte("artifact-A")))
+	statement, err := keyless.Statement(digestOf([]byte("artifact-A")), "", nil)
 	require.NoError(t, err)
 	entity, err := vs.Attest(ghaSANRef, ghaIssuer, statement)
 	require.NoError(t, err)

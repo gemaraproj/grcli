@@ -6,15 +6,16 @@ import (
 	"context"
 	"os"
 
-	"github.com/gemaraproj/grcli/internal/hub"
+	"github.com/gemaraproj/grc-store-clientkit/hub"
 )
 
 // ensureRegistryToken makes grcli authenticate to the bearer-auth
 // registry without the caller managing registry credentials:
 // it fetches a repository-scoped Distribution token from the hub's
 // /v2/token endpoint and exports it as GRCLI_REGISTRY_TOKEN, which both
-// the oras push/pull path (internal/registry.dockerCredentials) and the
-// cosign subprocess (internal/sign.registryCredArgs) already read.
+// the oras pull path (internal/registry.dockerCredentials) reads. The
+// publish path does not use this: it hands the minted token to the
+// clientkit registry client directly (see pushRegistry).
 //
 // It is a no-op — returning whatever the user supplied — when:
 //   - a registry credential is already set explicitly (GRCLI_REGISTRY_TOKEN
@@ -43,12 +44,10 @@ func ensureRegistryToken(ctx context.Context, hubBaseURL, bearer, repository str
 		return "", nil // no hub to ask; fall back to the Docker credential chain
 	}
 
-	tok, err := hub.FetchRegistryToken(ctx, hubBaseURL, bearer, repository, actions)
+	tok, err := hub.New(hubBaseURL, bearer).RegistryToken(ctx, repository, actions)
 	if err != nil {
 		return "", err
 	}
-	if tok != "" {
-		_ = os.Setenv("GRCLI_REGISTRY_TOKEN", tok)
-	}
-	return tok, nil
+	_ = os.Setenv("GRCLI_REGISTRY_TOKEN", tok.Token)
+	return tok.Token, nil
 }

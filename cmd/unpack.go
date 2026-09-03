@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	ckhub "github.com/gemaraproj/grc-store-clientkit/hub"
 	"github.com/gemaraproj/grcli/internal/cache"
 	"github.com/gemaraproj/grcli/internal/hub"
 	"github.com/gemaraproj/grcli/internal/refs"
@@ -174,7 +175,7 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 	}
 
 	fmt.Fprintf(out, "unpacked %s:%s → %s (%d files, %d imports)\n",
-		refLabel, version, output, len(unpacked.Files), len(unpacked.Imports))
+		refLabel, version, output, len(bundleFiles(unpacked)), len(unpacked.Imports))
 	if err := writeBundle(unpacked, output, out); err != nil {
 		return err
 	}
@@ -268,7 +269,7 @@ func referenceMode(v *viper.Viper) (refs.Mode, bool) {
 // bundle.json. Filenames are path-cleaned and rejected if they try to
 // escape the output directory.
 func writeBundle(b *bundle.Bundle, dir string, out io.Writer) error {
-	for _, file := range b.Files {
+	for _, file := range bundleFiles(b) {
 		name, err := safeWriteFile(dir, file.Name, file.Data)
 		if err != nil {
 			return err
@@ -349,7 +350,7 @@ func resolveReferences(ctx context.Context, v *viper.Viper, mode refs.Mode, b *b
 
 	// Gather selected references across the primary file(s).
 	var selected []refs.Selected
-	for _, f := range b.Files {
+	for _, f := range bundleFiles(b) {
 		a, err := refs.Scan(f.Data)
 		if err != nil {
 			fmt.Fprintf(out, "  ! could not read references in %s: %v\n", f.Name, err)
@@ -388,7 +389,7 @@ func resolveReferences(ctx context.Context, v *viper.Viper, mode refs.Mode, b *b
 	resolveRegistryHost := func() (string, error) {
 		if !regDone {
 			regDone = true
-			d, derr := hub.Discover(ctx, url)
+			d, derr := ckhub.Discover(ctx, url)
 			if derr != nil {
 				regErr = fmt.Errorf("registry discovery: %w", derr)
 			} else {
@@ -695,13 +696,11 @@ func mintRefPullToken(ctx context.Context, hubURL, repo string, userCreds bool) 
 	if userCreds || hubURL == "" {
 		return nil
 	}
-	tok, err := hub.FetchRegistryToken(ctx, hubURL, "", repo, []string{"pull"})
+	tok, err := ckhub.New(hubURL, "").RegistryToken(ctx, repo, []string{"pull"})
 	if err != nil {
 		return err
 	}
-	if tok != "" {
-		_ = os.Setenv("GRCLI_REGISTRY_TOKEN", tok)
-	}
+	_ = os.Setenv("GRCLI_REGISTRY_TOKEN", tok.Token)
 	return nil
 }
 

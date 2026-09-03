@@ -98,50 +98,19 @@ func noteCatOmittedImports(w io.Writer, n int) {
 	fmt.Fprintf(w, "! bundle carries %d import(s) not included in cat output — use 'grcli unpack' to materialize them\n", n)
 }
 
-// catBundle writes a bundle's Gemara content to out: the selected file when
-// --file is given, else the sole file verbatim, else a --- separated YAML
-// multi-document stream. A single file (or a --file selection) is written
-// byte-for-byte; only the multi-document stream inserts separators (and a
-// newline before one when a preceding doc lacks its own). It never writes
-// bundle.json.
+// catBundle writes a bundle's Gemara content to out, byte-for-byte: the
+// source artifact, or the file --file names (which can only be the source;
+// imports are never part of cat's output). It never writes bundle.json.
 func catBundle(b *bundle.Bundle, fileName string, out io.Writer) error {
-	if fileName != "" {
-		for i := range b.Files {
-			if b.Files[i].Name == fileName {
-				_, err := out.Write(b.Files[i].Data)
-				return err
-			}
-		}
-		return fmt.Errorf("no file named %q in bundle (have: %s)", fileName, strings.Join(fileNames(b.Files), ", "))
-	}
-
-	switch len(b.Files) {
-	case 0:
+	files := bundleFiles(b)
+	if len(files) == 0 {
 		return fmt.Errorf("bundle has no artifact files")
-	case 1:
-		_, err := out.Write(b.Files[0].Data)
-		return err
-	default:
-		for i := range b.Files {
-			if i > 0 {
-				if _, err := io.WriteString(out, "---\n"); err != nil {
-					return err
-				}
-			}
-			data := b.Files[i].Data
-			if _, err := out.Write(data); err != nil {
-				return err
-			}
-			// The next separator must start on its own line.
-			last := i == len(b.Files)-1
-			if !last && (len(data) == 0 || data[len(data)-1] != '\n') {
-				if _, err := io.WriteString(out, "\n"); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
 	}
+	if fileName != "" && files[0].Name != fileName {
+		return fmt.Errorf("no file named %q in bundle (have: %s)", fileName, strings.Join(fileNames(files), ", "))
+	}
+	_, err := out.Write(files[0].Data)
+	return err
 }
 
 func fileNames(files []bundle.File) []string {

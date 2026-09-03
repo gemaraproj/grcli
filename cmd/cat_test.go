@@ -36,7 +36,7 @@ func TestCat_CacheHit_Offline(t *testing.T) {
 	c := tempCache(t)
 	isolatedWorkdir(t)
 	const url = "https://hub.invalid.test"
-	seed := &bundle.Bundle{Files: []bundle.File{{Name: "controls.yaml", Data: []byte("id: from-cache\n")}}}
+	seed := &bundle.Bundle{Source: bundle.File{Name: "controls.yaml", Data: []byte("id: from-cache\n")}}
 	putBundle(c, hostOf(url), "acme", "controls", "1.0.0", seed, io.Discard)
 
 	out := runRoot(t, "cat", "--url", url, "--repository", "acme/controls", "--version", "1.0.0")
@@ -50,7 +50,7 @@ func TestCat_CleanHit_ContentOnStdoutStderrQuiet(t *testing.T) {
 	c := tempCache(t)
 	isolatedWorkdir(t)
 	const url = "https://hub.invalid.test"
-	seed := &bundle.Bundle{Files: []bundle.File{{Name: "controls.yaml", Data: []byte("id: from-cache\n")}}}
+	seed := &bundle.Bundle{Source: bundle.File{Name: "controls.yaml", Data: []byte("id: from-cache\n")}}
 	putBundle(c, hostOf(url), "acme", "controls", "1.0.0", seed, io.Discard)
 
 	stdout, stderr, err := executeRootSplit("cat", "--url", url, "--repository", "acme/controls", "--version", "1.0.0")
@@ -68,7 +68,7 @@ func TestCat_Diagnostics_GoToStderrNotStdout(t *testing.T) {
 	c := tempCache(t)
 	isolatedWorkdir(t)
 	const url = "https://hub.invalid.test"
-	seed := &bundle.Bundle{Files: []bundle.File{{Name: "controls.yaml", Data: []byte("id: from-cache\n")}}}
+	seed := &bundle.Bundle{Source: bundle.File{Name: "controls.yaml", Data: []byte("id: from-cache\n")}}
 	putBundle(c, hostOf(url), "acme", "controls", "1.0.0", seed, io.Discard)
 	corruptOneCacheBlob(t, c.Root())
 
@@ -115,7 +115,7 @@ func TestCat_PublishFileKeyIgnored(t *testing.T) {
 	isolatedWorkdir(t)
 	require.NoError(t, os.WriteFile(projectConfigFile, []byte("file: policy.yaml\n"), 0o644))
 	const url = "https://hub.invalid.test"
-	seed := &bundle.Bundle{Files: []bundle.File{{Name: "controls.yaml", Data: []byte("id: from-cache\n")}}}
+	seed := &bundle.Bundle{Source: bundle.File{Name: "controls.yaml", Data: []byte("id: from-cache\n")}}
 	putBundle(c, hostOf(url), "acme", "controls", "1.0.0", seed, io.Discard)
 
 	stdout, stderr, err := executeRootSplit("cat", "--url", url, "--repository", "acme/controls", "--version", "1.0.0")
@@ -143,7 +143,7 @@ func TestCat_ImportsNoteEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	b := &bundle.Bundle{
 		Manifest: bundle.Manifest{BundleVersion: "1.0", GemaraVersion: "0.5.0"},
-		Files:    []bundle.File{{Name: "controls.yaml", Type: "ControlCatalog", Data: []byte("id: acme\n")}},
+		Source:   bundle.File{Name: "controls.yaml", Type: "ControlCatalog", Data: []byte("id: acme\n")},
 		Imports:  []bundle.File{{Name: "dep.yaml", Type: "ControlCatalog", Data: []byte("id: dep\n")}},
 	}
 	desc, err := bundle.Pack(context.Background(), store, b)
@@ -166,67 +166,20 @@ func TestCat_MissingVersion_Errors(t *testing.T) {
 
 func TestCatBundle_SingleFileVerbatim(t *testing.T) {
 	var buf bytes.Buffer
-	b := &bundle.Bundle{Files: []bundle.File{{Name: "a.yaml", Data: []byte("id: acme")}}} // no trailing newline
+	b := &bundle.Bundle{Source: bundle.File{Name: "a.yaml", Data: []byte("id: acme")}} // no trailing newline
 	require.NoError(t, catBundle(b, "", &buf))
 	require.Equal(t, "id: acme", buf.String(), "single file must be byte-exact, no added newline")
 }
 
-func TestCatBundle_MultiFileStream(t *testing.T) {
-	var buf bytes.Buffer
-	b := &bundle.Bundle{Files: []bundle.File{
-		{Name: "a.yaml", Data: []byte("id: a\n")},
-		{Name: "b.yaml", Data: []byte("id: b")}, // no trailing newline
-	}}
-	require.NoError(t, catBundle(b, "", &buf))
-	// a ends with \n already, so no extra newline is inserted before ---.
-	require.Equal(t, "id: a\n---\nid: b", buf.String())
-}
-
-func TestCatBundle_MultiFileStream_InsertsNewlineBeforeSeparator(t *testing.T) {
-	var buf bytes.Buffer
-	b := &bundle.Bundle{Files: []bundle.File{
-		{Name: "a.yaml", Data: []byte("id: a")}, // no trailing newline -> one must be added before ---
-		{Name: "b.yaml", Data: []byte("id: b\n")},
-	}}
-	require.NoError(t, catBundle(b, "", &buf))
-	require.Equal(t, "id: a\n---\nid: b\n", buf.String())
-}
-
-func TestCatBundle_ThreeFileStream(t *testing.T) {
-	var buf bytes.Buffer
-	b := &bundle.Bundle{Files: []bundle.File{
-		{Name: "a.yaml", Data: []byte("id: a\n")},
-		{Name: "b.yaml", Data: []byte("id: b\n")},
-		{Name: "c.yaml", Data: []byte("id: c\n")},
-	}}
-	require.NoError(t, catBundle(b, "", &buf))
-	require.Equal(t, "id: a\n---\nid: b\n---\nid: c\n", buf.String())
-}
-
-func TestCatBundle_EmptyInteriorFile(t *testing.T) {
-	var buf bytes.Buffer
-	b := &bundle.Bundle{Files: []bundle.File{
-		{Name: "a.yaml", Data: []byte("id: a\n")},
-		{Name: "empty.yaml", Data: []byte{}}, // empty middle doc must not corrupt separators
-		{Name: "c.yaml", Data: []byte("id: c\n")},
-	}}
-	require.NoError(t, catBundle(b, "", &buf))
-	// a, then ---, then the empty doc (nothing) + a newline so the next --- is on its own line, then ---, then c.
-	require.Equal(t, "id: a\n---\n\n---\nid: c\n", buf.String())
-}
-
 func TestCatBundle_FileSelection(t *testing.T) {
 	var buf bytes.Buffer
-	b := &bundle.Bundle{Files: []bundle.File{
-		{Name: "a.yaml", Data: []byte("id: a\n")},
-		{Name: "b.yaml", Data: []byte("id: b\n")},
-	}}
+	b := &bundle.Bundle{Source: bundle.File{Name: "b.yaml", Data: []byte("id: b\n")}}
 	require.NoError(t, catBundle(b, "b.yaml", &buf))
-	require.Equal(t, "id: b\n", buf.String(), "--file selects exactly one, verbatim")
+	require.Equal(t, "id: b\n", buf.String(), "--file selects the source, verbatim")
 }
 
 func TestCatBundle_FileSelectionUnknown(t *testing.T) {
-	b := &bundle.Bundle{Files: []bundle.File{{Name: "a.yaml", Data: []byte("x")}}}
+	b := &bundle.Bundle{Source: bundle.File{Name: "a.yaml", Data: []byte("x")}}
 	err := catBundle(b, "nope.yaml", io.Discard)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no file named")

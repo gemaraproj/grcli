@@ -12,8 +12,8 @@ import (
 	"github.com/gemaraproj/go-gemara/bundle"
 	"github.com/spf13/viper"
 
+	"github.com/gemaraproj/grc-store-clientkit/hub"
 	"github.com/gemaraproj/grcli/internal/cache"
-	"github.com/gemaraproj/grcli/internal/hub"
 	"github.com/gemaraproj/grcli/internal/registry"
 )
 
@@ -127,6 +127,16 @@ func cachingEnabled(v *viper.Viper) bool {
 	return v.GetBool(flagCacheEnabled) && !v.GetBool(flagNoCache)
 }
 
+// bundleFiles is the bundle's primary artifact file(s) as a slice: the one
+// Source when present, else nothing. go-gemara v0.9 replaced the Files list
+// with a single Source; the renderers still iterate.
+func bundleFiles(b *bundle.Bundle) []bundle.File {
+	if b == nil || b.Source.Name == "" && len(b.Source.Data) == 0 {
+		return nil
+	}
+	return []bundle.File{b.Source}
+}
+
 // bundleFromEntry reconstructs an in-memory bundle from a cache entry. The
 // manifest bytes are the JSON writeBundle emits as bundle.json, so unmarshaling
 // then re-marshaling reproduces byte-identical output. File.Type and the
@@ -134,8 +144,14 @@ func cachingEnabled(v *viper.Viper) bool {
 // carrying Imports is never cached — see putBundle).
 func bundleFromEntry(e *cache.Entry) (*bundle.Bundle, error) {
 	b := &bundle.Bundle{Etag: e.ManifestDigest}
-	for _, f := range e.Files {
-		b.Files = append(b.Files, bundle.File{Name: f.Name, Data: f.Data})
+	switch len(e.Files) {
+	case 0:
+	case 1:
+		b.Source = bundle.File{Name: e.Files[0].Name, Data: e.Files[0].Data}
+	default:
+		// Written by a pre-v0.9 go-gemara bundle with several artifact
+		// files; the current model has exactly one source.
+		return nil, fmt.Errorf("cached entry carries %d artifact files; re-run with --no-cache to refresh it", len(e.Files))
 	}
 	if len(e.Manifest) > 0 {
 		if err := json.Unmarshal(e.Manifest, &b.Manifest); err != nil {
@@ -151,7 +167,7 @@ func bundleFromEntry(e *cache.Entry) (*bundle.Bundle, error) {
 // byte-identical output. It does not persist anything.
 func entryFromBundle(b *bundle.Bundle, license, sourceURL string) (cache.Entry, error) {
 	e := cache.Entry{ManifestDigest: b.Etag, License: license, SourceURL: sourceURL}
-	for _, f := range b.Files {
+	for _, f := range bundleFiles(b) {
 		e.Files = append(e.Files, cache.File{Name: f.Name, Data: f.Data})
 	}
 	if !b.Manifest.Empty() {

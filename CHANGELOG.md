@@ -3,6 +3,31 @@
 Notable changes to `grcli`. This project is pre-1.0; while on `v0.x`, a breaking
 change bumps the minor version.
 
+## [Unreleased]
+
+### Changed
+
+- `publish` now runs on `grc-store-clientkit` (hub discovery, registry tokens,
+  bundle pack/push, keyless signing, SLSA provenance) — the same code path
+  `pvtr` uses, so the two tools cannot drift on what the hub expects.
+- Keyless signing no longer requires GitHub Actions: `SIGSTORE_ID_TOKEN`
+  (an OIDC token with audience `sigstore`) or an interactive browser sign-in
+  work too. The signing identity is resolved *before* the push, so a missing
+  identity never leaves unsigned bytes in the registry.
+- A publish whose login does not own the target namespace now fails before
+  packing (the hub grants pull-only tokens to non-owners) instead of at sync.
+- Signed publishes attach a second OCI referrer carrying the SLSA provenance
+  predicate (artifactType `application/vnd.grc-store.provenance.bundle.v0.3+json`).
+- Registry credential overrides moved to the shared `GRC_STORE_REGISTRY_TOKEN`,
+  `GRC_STORE_REGISTRY_USERNAME` / `GRC_STORE_REGISTRY_PASSWORD` names, and the
+  Sigstore endpoint overrides to `GRC_STORE_FULCIO_URL` / `GRC_STORE_REKOR_URL`.
+  **Deprecated:** the `GRCLI_REGISTRY_*` and `GRCLI_FULCIO_URL` /
+  `GRCLI_REKOR_URL` spellings; `GRCLI_REGISTRY_*` still work for this release
+  with a warning, the Sigstore ones are no longer read.
+- go-gemara v0.9: a bundle carries exactly one source artifact. `cat` writes
+  it verbatim (the multi-document stream is gone), and a cache entry written
+  by an older grcli with several files is refused with a `--no-cache` hint.
+
 ## [0.1.0] - Unreleased
 
 First release of `grcli` under `github.com/gemaraproj/grcli`, published as a

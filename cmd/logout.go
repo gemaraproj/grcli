@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/gemaraproj/grc-store-clientkit/auth"
-	"github.com/gemaraproj/grcli/internal/hub"
+	"github.com/gemaraproj/grc-store-clientkit/hub"
 )
 
 func newLogoutCmd(v *viper.Viper) *cobra.Command {

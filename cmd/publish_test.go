@@ -193,34 +193,6 @@ func TestResolveTargetURL(t *testing.T) {
 	})
 }
 
-func TestCIAudience(t *testing.T) {
-	t.Run("prefers the hub-advertised ci_audience", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write([]byte(`{"registry_url":"https://r","hub_url":"https://h","api_version":"v1","ci_audience":"https://hub.example/ci"}`))
-		}))
-		defer srv.Close()
-
-		v := viper.New()
-		v.Set(flagURL, srv.URL)
-
-		require.Equal(t, "https://hub.example/ci", ciAudience(context.Background(), v),
-			"discovery's ci_audience must win so the token audience matches HUB_CI_OIDC_AUDIENCE")
-	})
-
-	t.Run("falls back to the hub URL when ci_audience is not advertised", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write([]byte(`{"registry_url":"https://r","hub_url":"https://h","api_version":"v1"}`))
-		}))
-		defer srv.Close()
-
-		v := viper.New()
-		v.Set(flagURL, srv.URL)
-
-		require.Equal(t, srv.URL, ciAudience(context.Background(), v),
-			"absent ci_audience must fall back to the publish hub URL")
-	})
-}
-
 func TestResolveBearerToken(t *testing.T) {
 	t.Run("uses GitHub Actions OIDC when present and no explicit token", func(t *testing.T) {
 		tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

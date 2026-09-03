@@ -40,78 +40,22 @@ func cosignAbsent(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 }
 
-func TestPreflight(t *testing.T) {
-	t.Run("--no-sign is the one allowed skip, even with nothing available", func(t *testing.T) {
+func TestKeyPreflight(t *testing.T) {
+	t.Run("without cosign fails closed and names cosign", func(t *testing.T) {
 		cosignAbsent(t)
-		t.Setenv("GITHUB_ACTIONS", "")
-		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
-		if err := Preflight(context.Background(), Options{Disabled: true}); err != nil {
-			t.Fatalf("--no-sign must pass preflight, got %v", err)
-		}
-	})
-
-	t.Run("CI keyless needs NO cosign on PATH", func(t *testing.T) {
-		cosignAbsent(t)
-		t.Setenv("GITHUB_ACTIONS", "true")
-		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "tok")
-		if err := Preflight(context.Background(), Options{}); err != nil {
-			t.Fatalf("keyless CI signing is in-process and must NOT require cosign, got %v", err)
-		}
-	})
-
-	t.Run("--cosign-key without cosign fails closed", func(t *testing.T) {
-		cosignAbsent(t)
-		t.Setenv("GITHUB_ACTIONS", "")
-		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
-		err := Preflight(context.Background(), Options{KeyPath: "/keys/x.key"})
+		err := KeyPreflight(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "cosign") {
-			t.Fatalf("want a cosign-not-found error for --cosign-key, got %v", err)
+			t.Fatalf("want a cosign-not-found error, got %v", err)
 		}
 	})
-
-	t.Run("CI with id-token passes (keyless)", func(t *testing.T) {
+	t.Run("with a bundle-capable cosign passes", func(t *testing.T) {
 		cosignOnPath(t)
-		t.Setenv("GITHUB_ACTIONS", "true")
-		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "tok")
-		if err := Preflight(context.Background(), Options{}); err != nil {
-			t.Fatalf("CI keyless should pass, got %v", err)
-		}
-	})
-
-	t.Run("CI without id-token fails closed", func(t *testing.T) {
-		cosignOnPath(t)
-		t.Setenv("GITHUB_ACTIONS", "true")
-		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
-		err := Preflight(context.Background(), Options{})
-		if err == nil || !strings.Contains(err.Error(), "id-token") {
-			t.Fatalf("want an id-token error, got %v", err)
-		}
-	})
-
-	t.Run("local with --cosign-key passes", func(t *testing.T) {
-		cosignOnPath(t)
-		t.Setenv("GITHUB_ACTIONS", "")
-		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
-		if err := Preflight(context.Background(), Options{KeyPath: "/keys/x.key"}); err != nil {
-			t.Fatalf("local key should pass, got %v", err)
-		}
-	})
-
-	t.Run("local with no key and no CI fails closed", func(t *testing.T) {
-		cosignOnPath(t)
-		t.Setenv("GITHUB_ACTIONS", "")
-		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
-		err := Preflight(context.Background(), Options{})
-		if err == nil || !strings.Contains(err.Error(), "signing material") {
-			t.Fatalf("want a no-signing-material error, got %v", err)
+		if err := KeyPreflight(context.Background()); err != nil {
+			t.Fatalf("got %v", err)
 		}
 	})
 }
 
-// recordingCosign installs a fake cosign that reports the given version and
-// appends the args of any non-version invocation (one per line) to a file,
-// returning that file's path. Lets a test assert the exact flags grcli passes
-// for a chosen cosign version, without a real registry.
 func recordingCosign(t *testing.T, version string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -141,16 +85,20 @@ func TestSignBundleFormatByCosignVersion(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			argsFile := recordingCosign(t, tc.version)
-			t.Setenv("GITHUB_ACTIONS", "")
-			t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
 			keyPath := filepath.Join(t.TempDir(), "cosign.key")
 			if err := os.WriteFile(keyPath, []byte("x"), 0o600); err != nil {
 				t.Fatalf("write key: %v", err)
 			}
-			if _, err := Sign(context.Background(), Options{Reference: "reg/repo:1", KeyPath: keyPath}); err != nil {
+			if err := SignWithKey(context.Background(), KeyOptions{Reference: "reg/repo:1", KeyPath: keyPath, RegistryToken: "tok", PlainHTTP: true}); err != nil {
 				t.Fatalf("sign: %v", err)
 			}
 			assertBundleFlag(t, argsFile, tc.wantFlag)
+			got, _ := os.ReadFile(argsFile)
+			for _, want := range []string{"--registry-token\ntok\n", "--allow-http-registry\n"} {
+				if !strings.Contains(string(got), want) {
+					t.Errorf("cosign args missing %q:\n%s", want, got)
+				}
+			}
 		})
 	}
 }
@@ -200,34 +148,12 @@ func TestBundleFormatArgsRejectsOutOfRangeCosign(t *testing.T) {
 	})
 }
 
-func TestSignFailsClosed(t *testing.T) {
-	t.Run("--no-sign returns ModeSkipped without error", func(t *testing.T) {
-		cosignAbsent(t)
-		r, err := Sign(context.Background(), Options{Disabled: true, Reference: "reg/repo:1"})
-		if err != nil {
-			t.Fatalf("--no-sign should not error: %v", err)
-		}
-		if r.Mode != ModeSkipped {
-			t.Errorf("Mode = %q, want skipped", r.Mode)
-		}
-	})
-
-	t.Run("empty reference errors", func(t *testing.T) {
-		if _, err := Sign(context.Background(), Options{}); err == nil {
-			t.Fatal("want error for empty reference")
-		}
-	})
-
-	t.Run("cannot sign is an error, never a silent unsigned publish", func(t *testing.T) {
-		cosignAbsent(t)
-		t.Setenv("GITHUB_ACTIONS", "")
-		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
-		r, err := Sign(context.Background(), Options{Reference: "reg/repo:1"})
-		if err == nil {
-			t.Fatalf("want error when signing material/cosign is missing, got result %+v", r)
-		}
-		if !strings.Contains(err.Error(), "cosign") {
-			t.Errorf("error = %v, want it to mention cosign", err)
-		}
-	})
+func TestSignWithKey_RequiresReferenceAndKey(t *testing.T) {
+	cosignAbsent(t)
+	if err := SignWithKey(context.Background(), KeyOptions{KeyPath: "k"}); err == nil {
+		t.Error("want error for empty reference")
+	}
+	if err := SignWithKey(context.Background(), KeyOptions{Reference: "reg/repo:1"}); err == nil {
+		t.Error("want error for empty key path")
+	}
 }

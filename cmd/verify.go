@@ -17,6 +17,7 @@ import (
 
 	"github.com/revanite-io/grc-store-protocol/identity"
 
+	ckhub "github.com/gemaraproj/grc-store-clientkit/hub"
 	"github.com/gemaraproj/grcli/internal/hub"
 	"github.com/gemaraproj/grcli/internal/registry"
 	"github.com/gemaraproj/grcli/internal/sign"
@@ -337,7 +338,7 @@ func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, err
 		issuer = defaultCertOIDCIssuer
 	}
 
-	d, err := hub.Discover(ctx, url)
+	d, err := ckhub.Discover(ctx, url)
 	if err != nil {
 		return verifyPolicy{}, fmt.Errorf("hub discovery: %w", err)
 	}

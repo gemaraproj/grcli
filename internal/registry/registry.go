@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package registry packs a Gemara bundle and writes it to an OCI target.
-// The same Pack call services both the live-push path (remote.Repository)
-// and the dry-run path (oci.Store on disk) — the only difference is
-// which target is passed in.
+// Package registry is grcli's read side of the OCI registry: pull a
+// Gemara bundle (remote or local layout) and discover its signature
+// referrer. Packing, pushing and attaching referrers moved to
+// grc-store-clientkit/bundle, shared with privateer-sdk.
 package registry
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,7 +16,6 @@ import (
 	"strings"
 
 	"github.com/gemaraproj/go-gemara/bundle"
-	godigest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/revanite-io/grc-store-protocol/limits"
 	"github.com/revanite-io/grc-store-protocol/mediatype"
@@ -29,67 +27,11 @@ import (
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
 	"oras.land/oras-go/v2/registry/remote/retry"
-
-	"github.com/gemaraproj/grcli/internal/digest"
 )
 
-// PackInput is the data registry.Pack needs to build the bundle.
-// Body is the merged artifact YAML; Provenance is the SLSA predicate
-// (typically a provenance.Predicate) embedded in the OCI config blob
-// under metadata.provenance.
-type PackInput struct {
-	Filename      string
-	ArtifactType  string
-	ArtifactID    string
-	GemaraVersion string
-	Body          []byte
-	Provenance    any // marshaled into bundle.Manifest.Metadata
-	// License is the canonical SPDX publication-license
-	// expression. When non-empty it is stamped as the standard OCI
-	// manifest annotation org.opencontainers.image.licenses. Empty means
-	// no annotation. The caller (cmd/publish.go) is the strict gate: this
-	// value is already validated and canonicalized via spdx.Canonicalize.
-	License string
-}
-
-// PushResult reports what was published.
-type PushResult struct {
-	ManifestDigest string
-	BodyDigest     string
-	Tag            string
-	Reference      string // <registry>/<repository>:<tag>
-}
-
-// PushRemote packs the bundle and pushes it to <registry>/<repository>:<tag>.
-// Auth flows through the default Docker credential chain plus the
-// $GRCLI_REGISTRY_PASSWORD / $GRCLI_REGISTRY_USERNAME env pair if set,
-// matching how oras CLI resolves auth.
-func PushRemote(ctx context.Context, registryHost, repository, tag string, in PackInput) (*PushResult, error) {
-	if tag == "" {
-		return nil, errors.New("--tag is required (or derivable from metadata.version)")
-	}
-	repo, err := newRemoteRepo(registryHost, repository)
-	if err != nil {
-		return nil, err
-	}
-
-	desc, bodyDigest, err := pack(ctx, repo, tag, in)
-	if err != nil {
-		return nil, err
-	}
-	return &PushResult{
-		ManifestDigest: desc.Digest.String(),
-		BodyDigest:     bodyDigest,
-		Tag:            tag,
-		// registryHost may carry an http(s):// scheme (it's the oras dial
-		// target, where the scheme drives PlainHTTP). The Reference is for
-		// display and cosign, which want a bare host — normalize it.
-		Reference: fmt.Sprintf("%s/%s:%s", NormalizeRegistryHost(registryHost), repository, tag),
-	}, nil
-}
-
 // UnpackRemote pulls a Gemara bundle from <registry>/<repository>:<tag>.
-// Auth uses the same chain as PushRemote.
+// Auth flows through the Docker credential chain plus the GRCLI_REGISTRY_*
+// env overrides (GRCLI_REGISTRY_TOKEN is what ensureRegistryToken exports).
 func UnpackRemote(ctx context.Context, registryHost, repository, tag string) (*bundle.Bundle, error) {
 	if tag == "" {
 		return nil, errors.New("--tag is required")
@@ -102,7 +44,7 @@ func UnpackRemote(ctx context.Context, registryHost, repository, tag string) (*b
 }
 
 // newRemoteRepo constructs an authenticated oras remote.Repository for
-// the given host + repo path. Shared by PushRemote and UnpackRemote.
+// the given host + repo path. Shared by UnpackRemote and FetchSignatureBundle.
 //
 // registryHost may include an http:// or https:// scheme prefix —
 // useful when the hub's discovery endpoint advertises a full URL via
@@ -170,68 +112,6 @@ func NormalizeRegistryHost(in string) string {
 // content layers are never read here. Shares the wire-contract's ingest cap so
 // grcli and the hub agree on what "too big to be a signature" means.
 const maxSignatureBlobBytes = limits.MaxPluginBlobBytes
-
-// AttachSignatureReferrer pushes a Sigstore signature bundle to the registry as
-// an OCI 1.1 referrer of the artifact manifest identified by subjectDigest —
-// the step `cosign sign` used to perform. It is the in-process publish half
-// of keyless signing (grcli signs keyless without cosign). Auth flows through the same
-// credential chain as the bundle push: the GRCLI_REGISTRY_TOKEN the publish
-// flow minted and exported.
-func AttachSignatureReferrer(ctx context.Context, registryHost, repository, subjectDigest string, bundleJSON []byte) error {
-	if subjectDigest == "" {
-		return errors.New("subject digest is required")
-	}
-	if len(bundleJSON) == 0 {
-		return errors.New("signature bundle is empty")
-	}
-	repo, err := newRemoteRepo(registryHost, repository)
-	if err != nil {
-		return err
-	}
-	// The subject descriptor the referrer attaches to. Resolve by digest so the
-	// size/mediaType are exactly the pushed manifest's (oras requires a full
-	// descriptor for Subject).
-	subject, err := repo.Resolve(ctx, subjectDigest)
-	if err != nil {
-		return fmt.Errorf("resolving subject %s: %w", subjectDigest, err)
-	}
-	return packSignatureReferrer(ctx, repo, subject, bundleJSON)
-}
-
-// packSignatureReferrer is the target-agnostic half of AttachSignatureReferrer
-// (split out so it is unit-testable against an in-memory oras store, mirroring
-// discoverSignatureBundle on the read side). It pushes the bundle blob, then an
-// OCI 1.1 referrer manifest of subject carrying it as the single layer.
-//
-// The referrer's artifactType is mediatype.SigstoreBundle, matching what the
-// bundle-by-default signer line stamps (cosign 3.x, pvtr's plugin packer — see
-// the RULE in grc-store-protocol/mediatype): grcli's in-process signer emits a
-// v0.3 bundle, so that is the semantically correct stamp. It is also the
-// maximally compatible one — hubs predating the both-types ingest fix accepted
-// SigstoreBundle only.
-//
-// mediatype.CosignSignReferrer must NOT be used here: it is a URL, not an
-// RFC 6838 media type, and oras.PackManifest rejects it as an artifactType
-// before any network I/O ("invalid artifactType format"). Discovery still
-// ACCEPTS it (see discoverSignatureBundle) — cosign 2.6.x stamps real
-// signatures with it; only this write site is constrained.
-func packSignatureReferrer(ctx context.Context, target oras.Target, subject ocispec.Descriptor, bundleJSON []byte) error {
-	bundleDesc := ocispec.Descriptor{
-		MediaType: mediatype.SigstoreBundle,
-		Digest:    godigest.FromBytes(bundleJSON),
-		Size:      int64(len(bundleJSON)),
-	}
-	if err := target.Push(ctx, bundleDesc, bytes.NewReader(bundleJSON)); err != nil {
-		return fmt.Errorf("pushing signature bundle blob: %w", err)
-	}
-	if _, err := oras.PackManifest(ctx, target, oras.PackManifestVersion1_1, mediatype.SigstoreBundle, oras.PackManifestOptions{
-		Subject: &subject,
-		Layers:  []ocispec.Descriptor{bundleDesc},
-	}); err != nil {
-		return fmt.Errorf("pushing signature referrer manifest: %w", err)
-	}
-	return nil
-}
 
 // FetchSignatureBundle resolves <registry>/<repository>:<tag> to its manifest
 // and returns the raw Sigstore bundle bytes attached as an OCI referrer, plus
@@ -359,84 +239,6 @@ func UnpackLocal(ctx context.Context, dir, tag string) (*bundle.Bundle, error) {
 		return nil, fmt.Errorf("opening OCI layout: %w", err)
 	}
 	return bundle.Unpack(ctx, store, tag)
-}
-
-// PushLocal writes the same bundle to an OCI image layout directory.
-// Used by --dry-run; identical bundle shape, no network.
-func PushLocal(ctx context.Context, dir, tag string, in PackInput) (*PushResult, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("creating output dir: %w", err)
-	}
-	store, err := oci.New(dir)
-	if err != nil {
-		return nil, fmt.Errorf("opening OCI layout: %w", err)
-	}
-	desc, bodyDigest, err := pack(ctx, store, tag, in)
-	if err != nil {
-		return nil, err
-	}
-	return &PushResult{
-		ManifestDigest: desc.Digest.String(),
-		BodyDigest:     bodyDigest,
-		Tag:            tag,
-		Reference:      fmt.Sprintf("oci:%s:%s", dir, tag),
-	}, nil
-}
-
-// pack is the shared assembly path: build the in-memory Bundle, call
-// bundle.Pack against the target, then tag the resulting manifest.
-func pack(ctx context.Context, target oras.Target, tag string, in PackInput) (ocispec.Descriptor, string, error) {
-	if len(in.Body) == 0 {
-		return ocispec.Descriptor{}, "", errors.New("artifact body is empty")
-	}
-	if in.Filename == "" {
-		return ocispec.Descriptor{}, "", errors.New("artifact filename is empty")
-	}
-
-	bodyDigest := digest.Bytes(in.Body)
-
-	manifest := bundle.Manifest{
-		BundleVersion: "1.0",
-		GemaraVersion: in.GemaraVersion,
-		Metadata:      map[string]any{},
-		Artifacts: []bundle.Artifact{{
-			Name: in.Filename,
-			Type: in.ArtifactType,
-			ID:   in.ArtifactID,
-			Role: "artifact",
-		}},
-	}
-	if in.Provenance != nil {
-		manifest.Metadata["provenance"] = in.Provenance
-	}
-
-	b := &bundle.Bundle{
-		Manifest: manifest,
-		Files: []bundle.File{{
-			Name: in.Filename,
-			Type: in.ArtifactType,
-			Data: in.Body,
-		}},
-	}
-
-	var packOpts []bundle.PackOption
-	if in.License != "" {
-		// Standard OCI carrier for the publication
-		// license. Manifest-level annotation, set only when a license
-		// is declared so omitting --license leaves the manifest unchanged.
-		packOpts = append(packOpts, bundle.WithAnnotations(map[string]string{
-			ocispec.AnnotationLicenses: in.License,
-		}))
-	}
-
-	desc, err := bundle.Pack(ctx, target, b, packOpts...)
-	if err != nil {
-		return ocispec.Descriptor{}, "", fmt.Errorf("packing bundle: %w", err)
-	}
-	if err := target.Tag(ctx, desc, tag); err != nil {
-		return ocispec.Descriptor{}, "", fmt.Errorf("tagging %s: %w", tag, err)
-	}
-	return desc, bodyDigest, nil
 }
 
 func dockerCredentials() (auth.CredentialFunc, error) {

@@ -16,13 +16,15 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/revanite-io/grc-store-protocol/discovery"
 	"github.com/revanite-io/grc-store-protocol/spdx"
 
 	"github.com/gemaraproj/grc-store-clientkit/auth"
+	"github.com/gemaraproj/grc-store-clientkit/bundle"
+	"github.com/gemaraproj/grc-store-clientkit/hub"
+	"github.com/gemaraproj/grc-store-clientkit/keyless"
+	"github.com/gemaraproj/grc-store-clientkit/provenance"
 	"github.com/gemaraproj/grcli/internal/digest"
-	"github.com/gemaraproj/grcli/internal/hub"
-	"github.com/gemaraproj/grcli/internal/provenance"
-	"github.com/gemaraproj/grcli/internal/registry"
 	"github.com/gemaraproj/grcli/internal/sign"
 	"github.com/gemaraproj/grcli/internal/source"
 )
@@ -50,8 +52,7 @@ func newPublishCmd(v *viper.Viper) *cobra.Command {
 		Short: "Bundle one Gemara artifact with provenance and push it to grc.store",
 		Long: `Loads the file(s) describing a single artifact, attaches a SLSA-shaped
 provenance record, packs an OCI bundle, pushes it to the configured
-registry, optionally signs with cosign, and notifies the hub via
-POST /v1/bundles/sync.
+registry, signs it, and notifies the hub via POST /v1/bundles/sync.
 
 Files can be supplied as positional arguments (grcli publish a.yaml
 b.yaml) or via -f / --file. The two forms are mutually exclusive —
@@ -59,6 +60,12 @@ mixing them is an error so neither silently wins.
 
 Use --dry-run to write the bundle to an OCI image layout on disk
 instead of touching any network.
+
+Signing is keyless by default: in GitHub Actions the workflow's OIDC
+token is used (permissions: id-token: write); elsewhere set
+SIGSTORE_ID_TOKEN to an OIDC token with audience "sigstore", or a browser
+window opens to sign in to the public-good Sigstore issuer. --cosign-key
+signs with a local key via cosign instead; --no-sign publishes unsigned.
 
 Auth in GitHub Actions: no GitHub secret, no --token, no GRCLI_TOKEN —
 when run inside a workflow with permissions: id-token: write, grcli
@@ -80,8 +87,8 @@ need to set a secret.`,
 	flags.String(flagToken, "", "bearer token for the hub sync call (or GRCLI_TOKEN); leave unset in GitHub Actions — the workflow's OIDC token is used automatically (trusted publishing, no GitHub secret needed)")
 	flags.Bool(flagDryRun, false, "skip all network — emit OCI layout to --output instead")
 	flags.String(flagOutput, "grcli-out", "directory to write the OCI layout to when --dry-run")
-	flags.Bool(flagNoSign, false, "skip cosign signing even when material is available")
-	flags.String(flagCosignKey, "", "cosign key file for local signing (or COSIGN_KEY)")
+	flags.Bool(flagNoSign, false, "publish unsigned (the hub rejects unsigned catalogs at ingest)")
+	flags.String(flagCosignKey, "", "cosign key file for key-based signing instead of keyless (or COSIGN_KEY)")
 	flags.String(flagLicense, "", "REQUIRED: publication license as an SPDX expression (e.g. Apache-2.0, MIT OR Apache-2.0, LicenseRef-Acme-Proprietary); stamped as the org.opencontainers.image.licenses OCI annotation. Publish fails before any network call if unset")
 
 	// Flags are bound to viper inside RunE (see runPublish) rather than
@@ -99,7 +106,7 @@ need to set a secret.`,
 // publishTarget holds the resolved push destination after flags, config,
 // and artifact metadata defaults are merged.
 type publishTarget struct {
-	registryHost string
+	registryHost string // the advertised registry_url, scheme kept
 	repository   string
 	tag          string
 	dryRun       bool
@@ -111,6 +118,7 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 		return fmt.Errorf("binding flags: %w", err)
 	}
 	ctx := cmd.Context()
+	out := cmd.OutOrStdout()
 	startedOn := time.Now().UTC()
 
 	flagFiles := expandCommas(v.GetStringSlice(flagFile))
@@ -132,45 +140,42 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 		return err
 	}
 
-	// Strict license gate: grcli
-	// is the strict end. --license is now REQUIRED. Validate and canonicalize
-	// BEFORE any pack/push — including the --dry-run path — so a missing,
-	// malformed, or unknown SPDX expression never produces OCI bytes (locally
-	// or in the registry).
+	// Strict license gate: grcli is the strict end. --license is REQUIRED.
+	// Validate and canonicalize BEFORE any pack/push — including the
+	// --dry-run path — so a missing, malformed, or unknown SPDX expression
+	// never produces OCI bytes (locally or in the registry).
 	canonicalLicense, err := validatePublishLicense(v.GetString(flagLicense))
 	if err != nil {
 		return err
 	}
 
+	// Every preflight runs BEFORE packing, so a misconfiguration never
+	// leaves orphaned bytes in the registry: signing material (the keyless
+	// identity is resolved here — in a terminal that may open a browser),
+	// the immutable-version check, the hub login, and a push-granting
+	// registry token.
+	var (
+		plan   signPlan
+		bearer string
+		reg    bundle.Registry
+	)
 	if !target.dryRun {
-		// Pre-flight: fail BEFORE packing/pushing if we intend to sign but
-		// can't — a signing misconfig must not leave unsigned bytes orphaned
-		// in the registry. This is a local, instant check (cosign on PATH +
-		// key/CI material); --no-sign is the explicit opt-out for an
-		// unsigned, unverifiable publish.
-		if err := sign.Preflight(ctx, sign.Options{
-			Disabled: v.GetBool(flagNoSign),
-			KeyPath:  v.GetString(flagCosignKey),
-		}); err != nil {
+		if plan, err = planSigning(ctx, v, cmd.ErrOrStderr()); err != nil {
 			return err
 		}
-		// Pre-flight: versions are immutable, so halt BEFORE packing or
-		// pushing if the coordinate is already taken. This is
-		// what stops a re-publish from clobbering existing bytes in the
-		// registry — the registry would accept the overwrite before the
-		// hub's sync-time guard could reject it.
 		if err := checkVersionAvailable(ctx, v, target.repository, target.tag); err != nil {
 			return err
 		}
-		// The registry rejects unauthenticated writes. Mint a repo-scoped
-		// push token from the hub and export it so both the oras push and
-		// the cosign signature push authenticate.
-		if err := authenticatePush(ctx, v, target.repository); err != nil {
+		if bearer, err = resolveBearerToken(ctx, v); err != nil {
+			return err
+		}
+		if reg, err = pushRegistry(ctx, v, bearer, target.repository); err != nil {
 			return err
 		}
 	}
 
 	predicate := provenance.Build(provenance.Input{
+		Tool:           "grcli",
 		ToolVersion:    version,
 		StartedOn:      startedOn,
 		ArtifactType:   loaded.Type,
@@ -178,12 +183,11 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 		ArtifactName:   loaded.Filename,
 		ArtifactDigest: digest.Bytes(loaded.Body),
 		SourceFiles:    loaded.SourceDigests,
-		Registry:       registry.NormalizeRegistryHost(target.registryHost),
+		Registry:       reg.Host,
 		Repository:     target.repository,
 		Tag:            target.tag,
 	})
-
-	packInput := registry.PackInput{
+	in := bundle.Input{
 		Filename:      loaded.Filename,
 		ArtifactType:  loaded.Type,
 		ArtifactID:    loaded.ID,
@@ -193,32 +197,155 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 		License:       canonicalLicense,
 	}
 
-	result, err := pushBundle(ctx, target, packInput, cmd.OutOrStdout(), loaded.Type, loaded.ID)
-	if err != nil {
-		return err
-	}
 	if target.dryRun {
+		res, err := bundle.PushLocal(ctx, target.output, target.tag, in)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "dry-run: wrote bundle to %s\n  manifest digest: %s\n  body digest:     %s\n  artifact: %s/%s\n",
+			res.Reference, res.ManifestDigest, res.BodyDigest, loaded.Type, loaded.ID)
 		return nil
 	}
 
-	return signAndNotify(ctx, v, signContext{
-		repository:     target.repository,
-		tag:            target.tag,
-		reference:      result.Reference,
-		registryHost:   target.registryHost,
-		manifestDigest: result.ManifestDigest,
-		plainHTTP:      strings.HasPrefix(target.registryHost, "http://"),
-	})
+	res, err := reg.Push(ctx, target.repository, target.tag, in)
+	if err != nil {
+		return fmt.Errorf("push: %w", err)
+	}
+	fmt.Fprintf(out, "pushed %s\n  manifest digest: %s\n", res.Reference, res.ManifestDigest)
+
+	status, err := plan.apply(ctx, reg, target.repository, res, predicate)
+	if err != nil {
+		return fmt.Errorf("sign: %w", err)
+	}
+	fmt.Fprintln(out, status)
+
+	syncResp, err := hub.New(publishHubURL(v), bearer).SyncBundle(ctx, target.repository, target.tag)
+	if err != nil {
+		return fmt.Errorf("hub sync: %w", err)
+	}
+	fmt.Fprintf(out, "hub indexed %s:%s — %d artifacts (%d new), types=%s\n",
+		syncResp.Repository, syncResp.Tag, syncResp.ArtifactCount, syncResp.NewCount, strings.Join(syncResp.Types, ","))
+	return nil
 }
 
-// signContext carries the push coordinates the sign + notify step needs.
-type signContext struct {
-	repository     string
-	tag            string
-	reference      string // <registry>/<repository>:<tag>, bare host
-	registryHost   string // scheme-prefixed oras dial target
-	manifestDigest string // sha256:… of the just-pushed manifest
-	plainHTTP      bool
+// signPlan is the signing decision, made before any bytes move.
+type signPlan struct {
+	mode    sign.Mode
+	keyPath string
+	idToken string // Fulcio identity for keyless; never the hub bearer
+}
+
+// planSigning resolves how this publish signs: --no-sign, --cosign-key
+// (cosign on PATH, version-gated), or keyless (identity resolved now via
+// SIGSTORE_ID_TOKEN, GitHub Actions, or an interactive sign-in; a
+// non-terminal with neither fails here, not after the push).
+func planSigning(ctx context.Context, v *viper.Viper, promptOut io.Writer) (signPlan, error) {
+	if v.GetBool(flagNoSign) {
+		return signPlan{mode: sign.ModeSkipped}, nil
+	}
+	if key := v.GetString(flagCosignKey); key != "" {
+		if err := sign.KeyPreflight(ctx); err != nil {
+			return signPlan{}, err
+		}
+		return signPlan{mode: sign.ModeKey, keyPath: key}, nil
+	}
+	tok, err := keyless.Identity(ctx, keyless.PublicGoodAudience, promptOut)
+	if err != nil {
+		return signPlan{}, fmt.Errorf("keyless signing: %w — or pass --cosign-key for key-based signing, or --no-sign", err)
+	}
+	return signPlan{mode: sign.ModeKeyless, idToken: tok}, nil
+}
+
+// apply signs the pushed bundle per the plan and returns the status line.
+func (p signPlan) apply(ctx context.Context, reg bundle.Registry, repository string, res *bundle.Result, predicate provenance.Predicate) (string, error) {
+	switch p.mode {
+	case sign.ModeSkipped:
+		return "signing skipped: --no-sign", nil
+	case sign.ModeKey:
+		err := sign.SignWithKey(ctx, sign.KeyOptions{
+			KeyPath: p.keyPath, Reference: res.Reference, PlainHTTP: reg.PlainHTTP, RegistryToken: reg.Token,
+		})
+		return "signed (key)", err
+	default:
+		signer := &keyless.Signer{IDToken: p.idToken}
+		_, attested, err := reg.SignAndAttach(ctx, repository, res, signer, predicate)
+		if err != nil {
+			return "", err
+		}
+		if !attested {
+			return "signed (keyless)", nil
+		}
+		return "signed (keyless), provenance attested", nil
+	}
+}
+
+// pushRegistry resolves the registry dial target from hub discovery and a
+// push-capable credential: a manual GRC_STORE_REGISTRY_* override (the
+// GRCLI_REGISTRY_* names still work for one release), else a repository-
+// scoped token minted from the hub with the caller's login. A pull-only
+// grant — the caller does not own the namespace — fails here, before
+// packing.
+func pushRegistry(ctx context.Context, v *viper.Viper, bearer, repository string) (bundle.Registry, error) {
+	hubURL := publishHubURL(v)
+	d, err := hub.Discover(ctx, hubURL)
+	if err != nil {
+		return bundle.Registry{}, fmt.Errorf("hub discovery: %w", err)
+	}
+	host, plainHTTP, err := hub.Registry(d)
+	if err != nil {
+		return bundle.Registry{}, fmt.Errorf("hub discovery: %w", err)
+	}
+	reg := bundle.Registry{Host: host, PlainHTTP: plainHTTP}
+
+	if tok := registryTokenOverride(); tok != "" {
+		reg.Token = tok
+		return reg, nil
+	}
+	if registryBasicAuthOverride() {
+		return reg, nil // clientkit reads GRC_STORE_REGISTRY_USERNAME/PASSWORD itself
+	}
+	tok, err := hub.New(hubURL, bearer).RegistryToken(ctx, repository, []string{"pull", "push"})
+	if err != nil {
+		if errors.Is(err, hub.ErrUnauthorized) {
+			return bundle.Registry{}, fmt.Errorf("minting a registry push token: %w — %s again", err, grcliApp.LoginHint())
+		}
+		return bundle.Registry{}, fmt.Errorf("minting a registry push token: %w", err)
+	}
+	if !tok.GrantsPush() {
+		ns, _, _ := strings.Cut(repository, "/")
+		return bundle.Registry{}, fmt.Errorf("the hub granted pull-only access to %s — publishing needs ownership of namespace %q (or hub admin); check the namespace on the hub or pass --repository", repository, ns)
+	}
+	reg.Token = tok.Token
+	return reg, nil
+}
+
+// registryTokenOverride returns a user-supplied registry bearer, honouring
+// the deprecated GRCLI_ spelling with a warning.
+func registryTokenOverride() string {
+	if t := os.Getenv(bundle.RegistryTokenEnv); t != "" {
+		return t
+	}
+	if t := os.Getenv("GRCLI_REGISTRY_TOKEN"); t != "" {
+		fmt.Fprintf(os.Stderr, "warning: GRCLI_REGISTRY_TOKEN is deprecated; use %s\n", bundle.RegistryTokenEnv)
+		return t
+	}
+	return ""
+}
+
+// registryBasicAuthOverride reports a user-supplied username/password pair,
+// mapping the deprecated GRCLI_ spelling onto the shared names so the
+// clientkit registry client picks it up.
+func registryBasicAuthOverride() bool {
+	if os.Getenv(bundle.RegistryUsernameEnv) != "" && os.Getenv(bundle.RegistryPasswordEnv) != "" {
+		return true
+	}
+	if u, p := os.Getenv("GRCLI_REGISTRY_USERNAME"), os.Getenv("GRCLI_REGISTRY_PASSWORD"); u != "" && p != "" {
+		fmt.Fprintf(os.Stderr, "warning: GRCLI_REGISTRY_USERNAME/PASSWORD are deprecated; use %s/%s\n", bundle.RegistryUsernameEnv, bundle.RegistryPasswordEnv)
+		_ = os.Setenv(bundle.RegistryUsernameEnv, u)
+		_ = os.Setenv(bundle.RegistryPasswordEnv, p)
+		return true
+	}
+	return false
 }
 
 // resolveTarget merges --repository/--url/--dry-run with the
@@ -249,12 +376,6 @@ func resolveTarget(ctx context.Context, v *viper.Viper, loaded *source.Loaded) (
 		if err != nil {
 			return publishTarget{}, fmt.Errorf("hub discovery: %w", err)
 		}
-		// Keep the scheme the hub advertises (http:// for a plain-HTTP
-		// dev registry, https:// for prod). registryHost is the oras dial
-		// target, and newRemoteRepo derives PlainHTTP from that scheme —
-		// stripping it here would force HTTPS against a plain-HTTP zot.
-		// Display/provenance/cosign consumers normalize to a bare host at
-		// their own call sites (PushResult.Reference, provenance below).
 		registryHost = d.RegistryURL
 	}
 
@@ -271,82 +392,13 @@ func resolveTarget(ctx context.Context, v *viper.Viper, loaded *source.Loaded) (
 	return target, nil
 }
 
-// pushBundle either writes the bundle to a local OCI layout (dry-run)
-// or pushes it to the configured registry, printing a one-line summary
-// in either case.
-func pushBundle(ctx context.Context, target publishTarget, in registry.PackInput, out io.Writer, artifactType, artifactID string) (*registry.PushResult, error) {
-	if target.dryRun {
-		result, err := registry.PushLocal(ctx, target.output, target.tag, in)
-		if err != nil {
-			return nil, err
-		}
-		fmt.Fprintf(out,
-			"dry-run: wrote bundle to %s\n  manifest digest: %s\n  body digest:     %s\n  artifact: %s/%s\n",
-			result.Reference, result.ManifestDigest, result.BodyDigest, artifactType, artifactID)
-		return result, nil
-	}
-	result, err := registry.PushRemote(ctx, target.registryHost, target.repository, target.tag, in)
-	if err != nil {
-		return nil, fmt.Errorf("push: %w", err)
-	}
-	fmt.Fprintf(out, "pushed %s\n  manifest digest: %s\n", result.Reference, result.ManifestDigest)
-	return result, nil
-}
-
-// signAndNotify runs the optional cosign step and the hub sync call.
-// Status lines go to os.Stdout rather than a passed-in writer because
-// the cosign subprocess inside sign.Sign writes to os.Stdout/os.Stderr
-// directly; routing grcli's own status lines through a different writer
-// would create a misleading "I control the output" contract.
-func signAndNotify(ctx context.Context, v *viper.Viper, sc signContext) error {
-	signResult, err := sign.Sign(ctx, sign.Options{
-		Disabled:       v.GetBool(flagNoSign),
-		KeyPath:        v.GetString(flagCosignKey),
-		Reference:      sc.reference,
-		PlainHTTP:      sc.plainHTTP,
-		RegistryHost:   sc.registryHost,
-		Repository:     sc.repository,
-		ManifestDigest: sc.manifestDigest,
-	})
-	if err != nil {
-		return fmt.Errorf("sign: %w", err)
-	}
-	if signResult.Mode == sign.ModeSkipped {
-		fmt.Fprintf(os.Stdout, "signing skipped: %s\n", signResult.Reason)
-	} else {
-		fmt.Fprintf(os.Stdout, "signed (%s)\n", signResult.Mode)
-	}
-
-	hubURL := publishHubURL(v)
-	if hubURL == "" {
-		fmt.Fprintln(os.Stdout, "skipping hub sync: --url not set")
-		return nil
-	}
-	token, err := resolveBearerToken(ctx, v)
-	if err != nil {
-		return err
-	}
-	syncResp, err := hub.New(hubURL, token).Sync(ctx, sc.repository, sc.tag)
-	if err != nil {
-		return fmt.Errorf("hub sync: %w", err)
-	}
-	fmt.Fprintf(os.Stdout,
-		"hub indexed %s:%s — %d artifacts (%d new), types=%s\n",
-		syncResp.Repository, syncResp.Tag,
-		syncResp.ArtifactCount, syncResp.NewCount,
-		strings.Join(syncResp.Types, ","),
-	)
-	return nil
-}
-
 // checkVersionAvailable is the publish pre-flight. Versions are
 // immutable, so if the target coordinate already exists on the hub, halt
 // here — before packing, before any registry write. That prevents a
 // re-publish from clobbering the existing bytes in the registry (which
 // accepts the overwrite before the hub's sync-time guard can reject it).
-// No-op when there's no hub URL to ask (--url explicitly cleared) or when
-// --repository isn't a plain <namespace>/<id> coordinate; in those cases
-// the server-side sync guard remains the backstop.
+// No-op when --repository isn't a plain <namespace>/<id> coordinate; the
+// server-side sync guard remains the backstop.
 func checkVersionAvailable(ctx context.Context, v *viper.Viper, repository, tag string) error {
 	hubBaseURL := publishHubURL(v)
 	if hubBaseURL == "" {
@@ -370,90 +422,40 @@ func checkVersionAvailable(ctx context.Context, v *viper.Viper, repository, tag 
 	}
 }
 
-// ciAudience returns the audience grcli requests on its GitHub Actions
-// OIDC token. The hub advertises its expected CI audience via discovery
-// (ci_audience); prefer that so the token grcli mints and the value the
-// hub validates can't drift (a trailing slash or a stale env var would
-// otherwise produce an opaque 401). Falls back to the hub URL when
-// discovery omits it (an older hub, or one with CI publishing off).
-func ciAudience(ctx context.Context, v *viper.Viper) string {
-	if url := v.GetString(flagURL); url != "" {
-		if d, err := hub.Discover(ctx, url); err == nil && d.CIAudience != "" {
-			return d.CIAudience
-		}
-	}
-	return publishHubURL(v)
-}
-
 // publishHubURL returns the hub base URL for the publish run (--url).
-// Empty means --url was explicitly cleared, so there's no hub to sync
-// with or mint a registry token from.
 func publishHubURL(v *viper.Viper) string {
 	return v.GetString(flagURL)
 }
 
-// authenticatePush exports a registry push token (GRCLI_REGISTRY_TOKEN)
-// so the oras push and the cosign signature push authenticate to the
-// bearer-auth registry. The hub grants push only to a
-// namespace owner or admin, so a push needs a hub login: when no explicit
-// registry credential override is present, we resolve the login token and
-// surface a clear `grcli login` hint if it's missing. No-op when there's
-// no hub URL (--url explicitly cleared) or when a manual GRCLI_REGISTRY_*
-// override is set.
-func authenticatePush(ctx context.Context, v *viper.Viper, repository string) error {
-	hubBaseURL := publishHubURL(v)
-	if hubBaseURL == "" {
-		return nil
-	}
-	if os.Getenv("GRCLI_REGISTRY_TOKEN") != "" ||
-		(os.Getenv("GRCLI_REGISTRY_USERNAME") != "" && os.Getenv("GRCLI_REGISTRY_PASSWORD") != "") {
-		return nil
-	}
-	login, err := resolveBearerToken(ctx, v)
-	if err != nil {
-		return fmt.Errorf("registry push needs a hub login to mint a push token: %w", err)
-	}
-	if _, err := ensureRegistryToken(ctx, hubBaseURL, login, repository, []string{"pull", "push"}); err != nil {
-		return fmt.Errorf("fetching registry push token: %w", err)
-	}
-	return nil
-}
-
-// resolveBearerToken wraps auth.Resolve with the publish command's
-// glue: pulls --token / GRCLI_TOKEN (merged by viper), re-runs hub
-// discovery to learn the OIDC issuer + client_id when --url is set
-// (cached after resolveTarget's earlier call, so this is a map lookup),
-// and instantiates the default credential store. Discovery failures
-// here are swallowed — the worst case is that auth.Resolve has no
-// store-key to look up and falls back to ErrNoToken, which prints the
-// same "run grcli login" hint a caller would already need.
+// resolveBearerToken wraps auth.Resolve with the publish command's glue.
+// Resolution order: --token / GRCLI_TOKEN > GitHub Actions OIDC (the
+// trusted-publishing bearer, audience from discovery) > stored device-login
+// creds. Discovery failures are swallowed — the worst case is that
+// auth.Resolve has no store key and returns ErrNoToken with the same
+// "run grcli login" hint.
 func resolveBearerToken(ctx context.Context, v *viper.Viper) (string, error) {
 	in := auth.ResolveInput{
 		App:           grcliApp,
 		ExplicitToken: v.GetString(flagToken),
 		Warn:          os.Stderr,
 	}
-	// Resolution order: --token / GRCLI_TOKEN (captured above)
-	// > GitHub Actions OIDC > stored device-login creds. The CI step:
-	// when no explicit token is set and we're in a GHA job, fetch the
-	// workflow's OIDC token and present it directly — the hub validates it
-	// and maps the repo to its trusted-publisher namespace. No
-	// secret, no login. The audience comes from the hub's discovery doc
-	// (ci_audience), falling back to the hub URL, so it always matches the
-	// hub's HUB_CI_OIDC_AUDIENCE. On any failure we fall through to the
-	// normal stored-credential path rather than hard-failing.
-	if in.ExplicitToken == "" && auth.InGitHubActions() {
-		if tok, err := auth.FetchGitHubActionsToken(ctx, ciAudience(ctx, v)); err == nil && tok != "" {
+	url := v.GetString(flagURL)
+	var disco *discovery.Document
+	if url != "" {
+		disco, _ = hub.Discover(ctx, url)
+	}
+	if in.ExplicitToken == "" {
+		tok, inCI, err := hub.CIBearer(ctx, url, disco)
+		switch {
+		case inCI && err == nil:
 			return tok, nil
-		} else if err != nil {
+		case err != nil:
 			fmt.Fprintf(os.Stderr, "warning: GitHub Actions OIDC token unavailable, falling back: %v\n", err)
 		}
 	}
-	if url := v.GetString(flagURL); url != "" {
-		if d, err := hub.Discover(ctx, url); err == nil {
-			in.Issuer = d.OIDCIssuer
-			in.ClientID = d.OIDCCLIClientID
-		}
+	if disco != nil {
+		in.Issuer = disco.OIDCIssuer
+		in.ClientID = disco.OIDCCLIClientID
 	}
 	if store, err := auth.NewDefaultStore(grcliApp); err == nil {
 		in.Store = store
@@ -462,14 +464,10 @@ func resolveBearerToken(ctx context.Context, v *viper.Viper) (string, error) {
 }
 
 // validatePublishLicense runs the strict SPDX gate for --license (grcli is
-// the strict end; the hub is lenient). The flag is now
-// REQUIRED: an empty/whitespace-only value is an error — distinct from the
-// invalid-value message, because a missing flag and a malformed value are
-// different user mistakes. A supplied value must be a well-formed SPDX
-// expression whose every leaf id is known to the bundled SPDX list; the
-// returned string is the canonical SPDX spelling, used from here on. The two
-// invalid-value failure modes are distinguished so the publisher knows whether
-// they have a grammar error or a typo'd/unknown id.
+// the strict end; the hub is lenient). The flag is REQUIRED: an
+// empty/whitespace-only value is an error — distinct from the invalid-value
+// message, because a missing flag and a malformed value are different user
+// mistakes. The returned string is the canonical SPDX spelling.
 func validatePublishLicense(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -490,10 +488,7 @@ func validatePublishLicense(raw string) (string, error) {
 }
 
 // mergeFileSources combines files from -f / --file with files passed as
-// positional arguments. The two forms are mutually exclusive: mixing
-// them silently would let one form override or shadow the other on
-// scripted runs where both might be set unintentionally (e.g. a
-// .grcli.yaml config sets file: while the caller also types one in).
+// positional arguments. The two forms are mutually exclusive.
 func mergeFileSources(flagFiles, positional []string) ([]string, error) {
 	if len(flagFiles) > 0 && len(positional) > 0 {
 		return nil, errors.New("pass input files either positionally or via --file, not both")
@@ -505,9 +500,7 @@ func mergeFileSources(flagFiles, positional []string) ([]string, error) {
 }
 
 // expandCommas lets users write `-f a.yaml,b.yaml` in addition to
-// `-f a.yaml -f b.yaml`. Cobra's StringSliceP splits commas at the
-// flag layer, but viper.GetStringSlice does not when the underlying
-// source is a config file, so we re-split defensively.
+// `-f a.yaml -f b.yaml`.
 func expandCommas(in []string) []string {
 	out := make([]string, 0, len(in))
 	for _, raw := range in {
