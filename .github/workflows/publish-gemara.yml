@@ -27,7 +27,7 @@
 #       permissions:
 #         contents: read
 #         id-token: write        # caller MUST grant this — it's what auth uses
-#       uses: gemaraproj/grcli/.github/workflows/publish-gemara.yml@v0.7.0
+#       uses: gemaraproj/grcli/.github/workflows/publish-gemara.yml@v0.1.0
 #       with:
 #         files: controls.yaml
 #         license: Apache-2.0
@@ -54,7 +54,7 @@ on:
         description: 'grcli release tag to install from ghcr.io/gemaraproj/grcli.'
         required: false
         type: string
-        default: v0.7.0
+        default: v0.1.0
 
 jobs:
   publish:

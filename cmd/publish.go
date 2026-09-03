@@ -82,7 +82,7 @@ need to set a secret.`,
 	flags.String(flagOutput, "grcli-out", "directory to write the OCI layout to when --dry-run")
 	flags.Bool(flagNoSign, false, "skip cosign signing even when material is available")
 	flags.String(flagCosignKey, "", "cosign key file for local signing (or COSIGN_KEY)")
-	flags.String(flagLicense, "", "REQUIRED: publication license as an SPDX expression (e.g. Apache-2.0, MIT OR Apache-2.0, LicenseRef-Revanite-Proprietary); stamped as the org.opencontainers.image.licenses OCI annotation. Publish fails before any network call if unset (ADR-0037)")
+	flags.String(flagLicense, "", "REQUIRED: publication license as an SPDX expression (e.g. Apache-2.0, MIT OR Apache-2.0, LicenseRef-Acme-Proprietary); stamped as the org.opencontainers.image.licenses OCI annotation. Publish fails before any network call if unset (ADR-0037)")
 
 	// Flags are bound to viper inside RunE (see runPublish) rather than
 	// here at construction time. Two subcommands sharing a viper instance

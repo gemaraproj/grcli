@@ -60,7 +60,7 @@ jobs:
         run: |
           set -euo pipefail
           ldflags="-s -w -X github.com/gemaraproj/grcli/cmd.version=${VERSION}"
-          artifact_type="application/vnd.revanite.grcli.binary"
+          artifact_type="application/vnd.gemaraproj.grcli.binary"
           platforms="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64"
 
           children=()

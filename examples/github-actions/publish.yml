@@ -40,10 +40,10 @@ jobs:
       - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
       - name: Install grcli
         run: |
-          oras pull ghcr.io/gemaraproj/grcli:v0.7.0 --platform linux/amd64
+          oras pull ghcr.io/gemaraproj/grcli:v0.1.0 --platform linux/amd64
           sudo install grcli /usr/local/bin/grcli
 
-      # NO cosign step, and that is the point. As of v0.6.0 keyless publish
+      # NO cosign step, and that is the point. Keyless publish
       # signing runs IN-PROCESS via sigstore-go (ADR-0049): grcli requests the
       # Actions OIDC token itself, gets a Fulcio certificate, logs to Rekor and
       # attaches the signature as an OCI referrer — no external tools, no
@@ -51,9 +51,8 @@ jobs:
       # no cosign on PATH. cosign is still needed ONLY for the `--cosign-key`
       # (key-based) path, which this example does not use.
       #
-      # Pin a tag, never `:latest`. v0.5.1 shipped a broken signing path and
-      # anything tracking `:latest` inherited it; the publishers that pinned
-      # were unaffected.
+      # Pin a tag, never `:latest`, so a bad release cannot reach you
+      # before you choose to upgrade.
 
       # --license is REQUIRED (ADR-0037): an SPDX expression naming the terms
       # this catalog is published under. grcli fails before any network call

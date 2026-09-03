@@ -6,7 +6,7 @@ description: >-
 inputs:
   version:
     description: >-
-      Version tag to install from ghcr.io/gemaraproj/grcli, e.g. v0.7.0,
+      Version tag to install from ghcr.io/gemaraproj/grcli, e.g. v0.1.0,
       or "latest".
     required: false
     default: latest

@@ -213,10 +213,10 @@ func TestPublish_License_LicenseRef_Accepted(t *testing.T) {
 	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
 	layout := filepath.Join(workdir, "layout")
 
-	runRoot(t, "publish", "--dry-run", "-f", input, "--output", layout, "--license", "LicenseRef-Revanite-Proprietary")
+	runRoot(t, "publish", "--dry-run", "-f", input, "--output", layout, "--license", "LicenseRef-Acme-Proprietary")
 
 	ann := readOCIManifestAnnotations(t, layout)
-	require.Equal(t, "LicenseRef-Revanite-Proprietary", ann["org.opencontainers.image.licenses"],
+	require.Equal(t, "LicenseRef-Acme-Proprietary", ann["org.opencontainers.image.licenses"],
 		"a LicenseRef- token must be accepted and stamped as the OCI license annotation")
 }
 

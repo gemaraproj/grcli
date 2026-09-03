@@ -2,9 +2,7 @@
 
 Go CLI and **primary end-user surface** for grc.store: validates Gemara YAML, packs it into
 signed OCI bundles with SLSA-shaped provenance, publishes to a hub, and verifies bundles.
-Go module: `github.com/gemaraproj/grcli`. Repo: `github.com/gemaraproj/grcli`; releases publish
-to `ghcr.io/gemaraproj/grcli`. This repo supersedes the earlier `revanite-io/grcli` repo and
-registry entirely.
+Go module and repo: `github.com/gemaraproj/grcli`; releases publish to `ghcr.io/gemaraproj/grcli`.
 
 `README.md` covers install (via `oras`), the full usage flow, and CI/trusted-publishing;
 `CHANGELOG.md` tracks the pre-1.0 breaking changes. This file is the map — point there, don't duplicate.

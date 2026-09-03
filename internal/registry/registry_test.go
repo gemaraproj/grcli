@@ -71,12 +71,11 @@ func attachSignature(t *testing.T, store *memory.Store, subject ocispec.Descript
 }
 
 // TestPackSignatureReferrer_StampsSigstoreBundle exercises the real pack/attach
-// path. It is the regression guard for the v0.5.1 keyless-publish failure: the
+// path. It is the regression guard for a keyless-publish failure where the
 // referrer was packed with artifactType mediatype.CosignSignReferrer, which is
 // a URL rather than an RFC 6838 media type, so oras.PackManifest rejected it
 // ("invalid artifactType format") before any network I/O — deterministically,
-// on every keyless publish (eddie-knight/gemara-asset-mirror @ 2ee9a5e,
-// 2026-08-19). Asserting the stamp is SigstoreBundle also pins the write side
+// on every keyless publish. Asserting the stamp is SigstoreBundle also pins the write side
 // to the type every hub generation accepts at ingest.
 func TestPackSignatureReferrer_StampsSigstoreBundle(t *testing.T) {
 	store := memory.New()
