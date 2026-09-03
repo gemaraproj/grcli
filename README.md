@@ -202,32 +202,31 @@ Keys (env form in parentheses):
   unset, grcli uses its pinned embedded root.
 
 > **Registry credentials are env-only, never config keys**: set
-> `GRCLI_REGISTRY_TOKEN` (or `GRCLI_REGISTRY_USERNAME` +
-> `GRCLI_REGISTRY_PASSWORD`) in the environment. A `registry-token:` line in a
+> `GRC_STORE_REGISTRY_TOKEN` (or `GRC_STORE_REGISTRY_USERNAME` +
+> `GRC_STORE_REGISTRY_PASSWORD`) in the environment — the names are shared
+> with every grc.store client tool; the older `GRCLI_REGISTRY_*` spellings
+> still work for one release with a warning. A `registry-token:` line in a
 > config file is ignored. The cache *location* is likewise set only by
 > `$GRCLI_CACHE`. (The cache toggle key is the flat `cache-enabled`, not
 > `cache.enabled`, because `$GRCLI_CACHE` would otherwise shadow a nested
 > `cache.*` key.)
 
-Signing is required by default, and `publish` fails *before* pushing when it
-can't sign, so nothing unsigned reaches the registry. What counts as signing
-material depends on where you run (`internal/sign.Preflight`):
+Signing is keyless by default and runs in-process (no `cosign`). The signing
+identity is resolved *before* the push, so a publish that cannot sign never
+leaves unsigned bytes in the registry. Where the identity comes from:
 
-| Where | Signing material | cosign on `PATH`? |
+| Where | Signing identity | cosign on `PATH`? |
 |---|---|---|
-| GitHub Actions (`GITHUB_ACTIONS=true`) | the runner's OIDC token — needs `permissions: id-token: write` | **no** — in-process |
-| Anywhere else | `--cosign-key` (or `COSIGN_KEY`) | **yes**, ≥ 2.6.0 |
-| Either, opting out | `--no-sign` | no |
+| `SIGSTORE_ID_TOKEN` set | that OIDC token (audience `sigstore`; e.g. GitLab CI id_tokens) | no |
+| GitHub Actions | the runner's OIDC token — needs `permissions: id-token: write` | no |
+| A terminal | a browser window opens to sign in to the public-good Sigstore issuer | no |
+| `--cosign-key` (or `COSIGN_KEY`) | a local key, via cosign | **yes**, ≥ 2.6.0 |
+| `--no-sign` | none — the hub rejects unsigned catalogs at ingest | no |
 
-So a **local** `publish` with neither a key nor `--no-sign` is refused up
-front — keyless signing is a CI-only path, because it depends on the
-workflow's OIDC identity:
-
-```
-grcli: no signing material — pass --cosign-key (or COSIGN_KEY) for local
-signing, run in GitHub Actions with `permissions: id-token: write` for
-keyless signing, or pass --no-sign to publish without provenance
-```
+A non-interactive run with none of the above fails up front with a message
+naming `SIGSTORE_ID_TOKEN`. A signed publish also attaches the SLSA provenance
+predicate as a second, signed OCI referrer. Override the Sigstore endpoints
+with `GRC_STORE_FULCIO_URL` / `GRC_STORE_REKOR_URL` for a private instance.
 
 Keyless `verify` runs **in-process** against Sigstore: no `cosign`,
 no version-skew caveats, just the `grcli` binary. It embeds the pinned Sigstore
