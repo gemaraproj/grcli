@@ -8,7 +8,7 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/testing/ca"
 	"github.com/stretchr/testify/require"
 
-	"github.com/revanite-io/grcli/internal/sign"
+	"github.com/gemaraproj/grcli/internal/sign"
 )
 
 // TestVerifyEntity_AcceptsInTotoDSSE is the ADR-0049 sign→verify round-trip: it

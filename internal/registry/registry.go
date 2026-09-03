@@ -30,7 +30,7 @@ import (
 	"oras.land/oras-go/v2/registry/remote/credentials"
 	"oras.land/oras-go/v2/registry/remote/retry"
 
-	"github.com/revanite-io/grcli/internal/digest"
+	"github.com/gemaraproj/grcli/internal/digest"
 )
 
 // PackInput is the data registry.Pack needs to build the bundle.

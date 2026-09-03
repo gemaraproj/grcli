@@ -6,7 +6,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/revanite-io/grcli/internal/hub"
+	"github.com/gemaraproj/grcli/internal/hub"
 )
 
 // ensureRegistryToken makes grcli authenticate to the bearer-auth

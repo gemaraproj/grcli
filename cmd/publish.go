@@ -19,12 +19,12 @@ import (
 	"github.com/revanite-io/grc-store-protocol/spdx"
 
 	"github.com/gemaraproj/grc-store-clientkit/auth"
-	"github.com/revanite-io/grcli/internal/digest"
-	"github.com/revanite-io/grcli/internal/hub"
-	"github.com/revanite-io/grcli/internal/provenance"
-	"github.com/revanite-io/grcli/internal/registry"
-	"github.com/revanite-io/grcli/internal/sign"
-	"github.com/revanite-io/grcli/internal/source"
+	"github.com/gemaraproj/grcli/internal/digest"
+	"github.com/gemaraproj/grcli/internal/hub"
+	"github.com/gemaraproj/grcli/internal/provenance"
+	"github.com/gemaraproj/grcli/internal/registry"
+	"github.com/gemaraproj/grcli/internal/sign"
+	"github.com/gemaraproj/grcli/internal/source"
 )
 
 // Flag names are declared once so the compiler catches typos at every

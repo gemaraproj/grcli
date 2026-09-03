@@ -6,9 +6,8 @@ description: >-
 inputs:
   version:
     description: >-
-      Version tag to install, e.g. v0.6.0, or "latest". Releases from v0.6.0
-      live at ghcr.io/gemaraproj/grcli (the repo moved orgs); tags older than
-      that were published to ghcr.io/revanite-io/grcli and are NOT here.
+      Version tag to install from ghcr.io/gemaraproj/grcli, e.g. v0.7.0,
+      or "latest".
     required: false
     default: latest
   verify:

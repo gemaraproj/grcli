@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/revanite-io/grcli/cmd"
+	"github.com/gemaraproj/grcli/cmd"
 )
 
 func main() {

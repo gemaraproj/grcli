@@ -1,7 +1,7 @@
 .PHONY: build test testcov lint vet fmt fmtcheck tidy tidycheck ci-local clean
 
 BIN     := bin/grcli
-PKG     := github.com/revanite-io/grcli
+PKG     := github.com/gemaraproj/grcli
 VERSION ?= $(shell git describe --tags --dirty --always 2>/dev/null || echo dev)
 LDFLAGS := -X $(PKG)/cmd.version=$(VERSION)
 

@@ -53,7 +53,7 @@ func TestBuild_BasicShape(t *testing.T) {
 func TestBuild_GitHubActions_BuilderIDIsRunURL(t *testing.T) {
 	t.Setenv("GITHUB_ACTIONS", "true")
 	t.Setenv("GITHUB_SERVER_URL", "https://github.com")
-	t.Setenv("GITHUB_REPOSITORY", "revanite-io/grcli")
+	t.Setenv("GITHUB_REPOSITORY", "gemaraproj/grcli")
 	t.Setenv("GITHUB_RUN_ID", "42")
 	t.Setenv("GITHUB_RUN_ATTEMPT", "1")
 
@@ -62,7 +62,7 @@ func TestBuild_GitHubActions_BuilderIDIsRunURL(t *testing.T) {
 		StartedOn:   time.Now().UTC(),
 	})
 	require.Equal(t,
-		"https://github.com/revanite-io/grcli/actions/runs/42",
+		"https://github.com/gemaraproj/grcli/actions/runs/42",
 		p.RunDetails.Builder.ID)
 	require.Equal(t, "42-1", p.RunDetails.Metadata.InvocationID)
 }

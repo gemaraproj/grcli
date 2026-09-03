@@ -27,7 +27,7 @@
 #       permissions:
 #         contents: read
 #         id-token: write        # caller MUST grant this — it's what auth uses
-#       uses: revanite-io/grcli/.github/workflows/publish-gemara.yml@v0.3.0
+#       uses: gemaraproj/grcli/.github/workflows/publish-gemara.yml@v0.7.0
 #       with:
 #         files: controls.yaml
 #         license: Apache-2.0
@@ -51,10 +51,10 @@ on:
         type: string
         default: https://hub.grc.store
       grcli-version:
-        description: 'grcli release tag to install from ghcr.io/revanite-io/grcli.'
+        description: 'grcli release tag to install from ghcr.io/gemaraproj/grcli.'
         required: false
         type: string
-        default: v0.3.0
+        default: v0.7.0
 
 jobs:
   publish:
@@ -72,7 +72,7 @@ jobs:
         env:
           GRCLI_VERSION: ${{ inputs.grcli-version }}
         run: |
-          oras pull "ghcr.io/revanite-io/grcli:$GRCLI_VERSION" --platform linux/amd64
+          oras pull "ghcr.io/gemaraproj/grcli:$GRCLI_VERSION" --platform linux/amd64
           sudo install grcli /usr/local/bin/grcli
 
       # Required for keyless signing — the same OIDC identity authorizes the push.

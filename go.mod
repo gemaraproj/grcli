@@ -1,4 +1,4 @@
-module github.com/revanite-io/grcli
+module github.com/gemaraproj/grcli
 
 go 1.26.0
 

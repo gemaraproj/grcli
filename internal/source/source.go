@@ -15,7 +15,7 @@ import (
 	"github.com/gemaraproj/go-gemara/fetcher"
 	"sigs.k8s.io/yaml"
 
-	"github.com/revanite-io/grcli/internal/digest"
+	"github.com/gemaraproj/grcli/internal/digest"
 )
 
 // Loaded is the result of merging the provided input files into a single

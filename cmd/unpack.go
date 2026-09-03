@@ -18,11 +18,11 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/revanite-io/grcli/internal/cache"
-	"github.com/revanite-io/grcli/internal/hub"
-	"github.com/revanite-io/grcli/internal/refs"
-	"github.com/revanite-io/grcli/internal/registry"
-	"github.com/revanite-io/grcli/internal/sigverify"
+	"github.com/gemaraproj/grcli/internal/cache"
+	"github.com/gemaraproj/grcli/internal/hub"
+	"github.com/gemaraproj/grcli/internal/refs"
+	"github.com/gemaraproj/grcli/internal/registry"
+	"github.com/gemaraproj/grcli/internal/sigverify"
 )
 
 const (

@@ -14,7 +14,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 
-	"github.com/revanite-io/grcli/internal/cache"
+	"github.com/gemaraproj/grcli/internal/cache"
 )
 
 func tempCache(t *testing.T) *cache.Cache {

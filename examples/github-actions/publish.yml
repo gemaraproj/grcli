@@ -40,7 +40,7 @@ jobs:
       - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
       - name: Install grcli
         run: |
-          oras pull ghcr.io/gemaraproj/grcli:v0.6.0 --platform linux/amd64
+          oras pull ghcr.io/gemaraproj/grcli:v0.7.0 --platform linux/amd64
           sudo install grcli /usr/local/bin/grcli
 
       # NO cosign step, and that is the point. As of v0.6.0 keyless publish
@@ -53,8 +53,7 @@ jobs:
       #
       # Pin a tag, never `:latest`. v0.5.1 shipped a broken signing path and
       # anything tracking `:latest` inherited it; the publishers that pinned
-      # were unaffected. Note the org move: v0.6.0+ live at
-      # ghcr.io/gemaraproj/grcli, tags <= v0.5.1 at ghcr.io/revanite-io/grcli.
+      # were unaffected.
 
       # --license is REQUIRED (ADR-0037): an SPDX expression naming the terms
       # this catalog is published under. grcli fails before any network call

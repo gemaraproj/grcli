@@ -17,10 +17,10 @@ import (
 
 	"github.com/revanite-io/grc-store-protocol/identity"
 
-	"github.com/revanite-io/grcli/internal/hub"
-	"github.com/revanite-io/grcli/internal/registry"
-	"github.com/revanite-io/grcli/internal/sign"
-	"github.com/revanite-io/grcli/internal/sigverify"
+	"github.com/gemaraproj/grcli/internal/hub"
+	"github.com/gemaraproj/grcli/internal/registry"
+	"github.com/gemaraproj/grcli/internal/sign"
+	"github.com/gemaraproj/grcli/internal/sigverify"
 )
 
 // Flag names specific to verify. flagURL / flagRepository /

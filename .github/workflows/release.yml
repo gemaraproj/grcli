@@ -24,7 +24,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE: ghcr.io/${{ github.repository }}   # ghcr.io/gemaraproj/grcli (repo moved orgs after v0.5.1)
+  IMAGE: ghcr.io/${{ github.repository }}   # ghcr.io/gemaraproj/grcli
 
 jobs:
   release:
@@ -59,7 +59,7 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           set -euo pipefail
-          ldflags="-s -w -X github.com/revanite-io/grcli/cmd.version=${VERSION}"
+          ldflags="-s -w -X github.com/gemaraproj/grcli/cmd.version=${VERSION}"
           artifact_type="application/vnd.revanite.grcli.binary"
           platforms="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64"
 

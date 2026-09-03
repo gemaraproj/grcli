@@ -17,7 +17,7 @@ import (
 	"github.com/gemaraproj/go-gemara/bundle"
 	"github.com/stretchr/testify/require"
 
-	"github.com/revanite-io/grcli/internal/cache"
+	"github.com/gemaraproj/grcli/internal/cache"
 )
 
 // refBearingCatalogYAML is a ControlCatalog whose `imports` resolves reference

@@ -3,6 +3,14 @@
 Notable changes to `grcli`. This project is pre-1.0; while on `v0.x`, a breaking
 change bumps the minor version.
 
+## [Unreleased]
+
+### Changed
+
+- **Go module path renamed to `github.com/gemaraproj/grcli`.** This repo now
+  supersedes `revanite-io/grcli` entirely; every workflow, example and doc
+  points at `github.com/gemaraproj/grcli` / `ghcr.io/gemaraproj/grcli`.
+
 ## [0.6.0] - 2026-08-19
 
 > **Live CI smoke PASSED 2026-08-19** — the gate this release was held behind.
@@ -15,8 +23,7 @@ change bumps the minor version.
 >
 > **The repo also moved orgs after v0.5.1**: v0.6.0+ publish to
 > `ghcr.io/gemaraproj/grcli`; tags ≤ v0.5.1 remain at
-> `ghcr.io/revanite-io/grcli` and are not re-published. The Go module path is
-> deliberately unchanged (`github.com/revanite-io/grcli`).
+> `ghcr.io/revanite-io/grcli` and are not re-published.
 
 ### Changed
 

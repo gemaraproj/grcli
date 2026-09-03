@@ -20,7 +20,7 @@ import (
 
 	"golang.org/x/mod/semver"
 
-	"github.com/revanite-io/grcli/internal/registry"
+	"github.com/gemaraproj/grcli/internal/registry"
 )
 
 // Mode reports how sign() resolved its trust material.

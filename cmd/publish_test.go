@@ -13,8 +13,8 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 
-	"github.com/revanite-io/grcli/internal/registry"
-	"github.com/revanite-io/grcli/internal/source"
+	"github.com/gemaraproj/grcli/internal/registry"
+	"github.com/gemaraproj/grcli/internal/source"
 )
 
 func TestResolveTarget(t *testing.T) {

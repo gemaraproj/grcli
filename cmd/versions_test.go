@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/revanite-io/grcli/internal/hub"
+	"github.com/gemaraproj/grcli/internal/hub"
 )
 
 // catalogBodyTwoReleases is the happy-path JSON the hub returns for a

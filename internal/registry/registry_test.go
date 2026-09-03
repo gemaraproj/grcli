@@ -15,7 +15,7 @@ import (
 	"oras.land/oras-go/v2/content/memory"
 	"oras.land/oras-go/v2/registry"
 
-	"github.com/revanite-io/grcli/internal/digest"
+	"github.com/gemaraproj/grcli/internal/digest"
 )
 
 // pushBlob pushes raw bytes with the given media type and returns its descriptor.

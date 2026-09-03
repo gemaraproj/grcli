@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 
-	"github.com/revanite-io/grcli/internal/sigverify"
+	"github.com/gemaraproj/grcli/internal/sigverify"
 )
 
 // fakeCosignVersion puts a cosign on PATH that answers `cosign version[ --json]`

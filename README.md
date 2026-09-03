@@ -28,7 +28,7 @@ In GitHub Actions:
     sudo install grcli /usr/local/bin/grcli
 ```
 
-Pin a release tag (`:v0.6.0`) instead of `latest` for reproducible
+Pin a release tag (`:v0.7.0`) instead of `latest` for reproducible
 installs. To verify the signature before installing:
 
 ```sh

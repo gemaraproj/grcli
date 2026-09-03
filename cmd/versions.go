@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/revanite-io/grcli/internal/hub"
+	"github.com/gemaraproj/grcli/internal/hub"
 )
 
 const flagLatest = "latest"

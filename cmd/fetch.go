@@ -12,9 +12,9 @@ import (
 	"github.com/gemaraproj/go-gemara/bundle"
 	"github.com/spf13/viper"
 
-	"github.com/revanite-io/grcli/internal/cache"
-	"github.com/revanite-io/grcli/internal/hub"
-	"github.com/revanite-io/grcli/internal/registry"
+	"github.com/gemaraproj/grcli/internal/cache"
+	"github.com/gemaraproj/grcli/internal/hub"
+	"github.com/gemaraproj/grcli/internal/registry"
 )
 
 // resolveBundle fetches the primary artifact bundle from either a local OCI
