@@ -16,7 +16,10 @@ require (
 	sigs.k8s.io/yaml v1.6.0
 )
 
-require github.com/go-openapi/swag/pools v0.27.3 // indirect
+require (
+	github.com/aws/smithy-go v1.28.1 // indirect
+	github.com/go-openapi/swag/pools v0.27.3 // indirect
+)
 
 require (
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
@@ -29,7 +32,7 @@ require (
 	github.com/digitorus/pkcs7 v0.0.0-20230818184609-3a137a874352 // indirect
 	github.com/digitorus/timestamp v0.0.0-20231217203849-220c5c2851b7 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
-	github.com/gemaraproj/grc-store-clientkit v0.1.3
+	github.com/gemaraproj/grc-store-clientkit v0.2.0
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -105,11 +108,14 @@ require (
 	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260727163830-6c54dddc4772 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260720155508-bb71a54f79dc // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 )
 
+// The publish surface this repo now consumes (bundle, hub, keyless, provenance)
+// lands in clientkit v0.2.0. The require above names that version; this replace
+// satisfies it locally until the tag exists. DROP THIS LINE BEFORE MERGE.
 replace github.com/gemaraproj/grc-store-clientkit => ../../gemaraproj/grc-store-clientkit
