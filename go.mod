@@ -6,7 +6,7 @@ require (
 	github.com/gemaraproj/go-gemara v0.9.2
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
-	github.com/revanite-io/grc-store-protocol v0.5.1
+	github.com/revanite-io/grc-store-protocol v0.5.2
 	github.com/sigstore/sigstore-go v1.3.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
@@ -114,8 +114,3 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 )
-
-// The publish surface this repo now consumes (bundle, hub, keyless, provenance)
-// lands in clientkit v0.2.0. The require above names that version; this replace
-// satisfies it locally until the tag exists. DROP THIS LINE BEFORE MERGE.
-replace github.com/gemaraproj/grc-store-clientkit => ../../gemaraproj/grc-store-clientkit
