@@ -74,12 +74,13 @@ func runValidate(cmd *cobra.Command, v *viper.Viper) error {
 	out := cmd.OutOrStdout()
 	var failed []string
 	for _, file := range files {
-		artifactType, peekErr := readArtifactType(file)
+		body, artifactType, peekErr := readArtifactType(file)
 		if peekErr != nil {
 			fmt.Fprintf(out, "FAIL %s: %v\n", file, peekErr)
 			failed = append(failed, file)
 			continue
 		}
+		warnReferences(out, "WARN "+file+": ", body)
 		if validateErr := vetFile(ctx, specDir, artifactType, file, out); validateErr != nil {
 			fmt.Fprintf(out, "FAIL %s (#%s): %v\n", file, artifactType, validateErr)
 			failed = append(failed, file)
@@ -119,11 +120,12 @@ func resolveSpecDir(v *viper.Viper) (string, error) {
 }
 
 // readArtifactType peeks at metadata.type without loading the whole
-// artifact. Mirrors source.peekedMetadata's narrow approach.
-func readArtifactType(path string) (string, error) {
+// artifact. Mirrors source.peekedMetadata's narrow approach. The raw body
+// is returned too, so callers can lint it without a second read.
+func readArtifactType(path string) ([]byte, string, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	var meta struct {
 		Metadata struct {
@@ -131,12 +133,12 @@ func readArtifactType(path string) (string, error) {
 		} `json:"metadata"`
 	}
 	if err := yaml.Unmarshal(body, &meta); err != nil {
-		return "", fmt.Errorf("parsing %s: %w", path, err)
+		return nil, "", fmt.Errorf("parsing %s: %w", path, err)
 	}
 	if meta.Metadata.Type == "" {
-		return "", errors.New("metadata.type is missing or empty")
+		return nil, "", errors.New("metadata.type is missing or empty")
 	}
-	return meta.Metadata.Type, nil
+	return body, meta.Metadata.Type, nil
 }
 
 // vetFile invokes 'cue vet -d "#<Type>" . <file>' with the working

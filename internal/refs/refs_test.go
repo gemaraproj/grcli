@@ -2,7 +2,10 @@
 
 package refs
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const controlCatalogYAML = `
 metadata:
@@ -145,5 +148,88 @@ func TestRecognize(t *testing.T) {
 				t.Error("expected a non-empty skip reason")
 			}
 		})
+	}
+}
+
+func TestRecognizeWidenedShapes(t *testing.T) {
+	const target = "hub.preview.grc.store"
+	cases := []struct {
+		name   string
+		url    string
+		wantOK bool
+		wantNS string
+		wantID string
+	}{
+		{"hub api form on prod host while targeting preview", "https://hub.grc.store/v1/catalogs/acme/baseline", true, "acme", "baseline"},
+		{"hub api form with version", "https://hub.grc.store/v1/catalogs/acme/baseline/versions/2.0", true, "acme", "baseline"},
+		{"legacy search form", "https://grc.store/search/finos-aigf/finos-air/versions/0.2.0", true, "finos-aigf", "finos-air"},
+		{"ui form with version suffix", "https://grc.store/acme/baseline/versions/1.0", true, "acme", "baseline"},
+		{"mixed case slugifies to the indexed row", "https://grc.store/FINOS-CCC/CCC.Core.CN", true, "finos-ccc", "ccc.core.cn"},
+		{"percent-encoded segment", "https://grc.store/FINOS%20CCC/ccc.objstor.cp", true, "finos-ccc", "ccc.objstor.cp"},
+		{"api form on a foreign host is not fetched from the target", "https://hub.example.org/v1/catalogs/acme/baseline", false, "", ""},
+		{"versions without a version", "https://grc.store/acme/baseline/versions", false, "", ""},
+		{"segments that slugify to nothing", "https://grc.store/---/baseline", false, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ns, id, ok, reason := Recognize(tc.url, target)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v (reason %q), want %v", ok, reason, tc.wantOK)
+			}
+			if ok && (ns != tc.wantNS || id != tc.wantID) {
+				t.Errorf("(ns,id) = (%q,%q), want (%q,%q)", ns, id, tc.wantNS, tc.wantID)
+			}
+		})
+	}
+}
+
+func TestLint(t *testing.T) {
+	body := []byte(`metadata:
+  id: my-catalog
+  type: ControlCatalog
+  lexicon:
+    reference-id: lex
+  mapping-references:
+    - id: ok
+      title: Canonical
+      version: "1.0"
+      url: https://grc.store/acme/baseline
+    - id: ext
+      title: External standard, any url is fine
+      url: https://github.com/ossf/scorecard
+    - id: legacy
+      title: Legacy search form
+      url: https://grc.store/search/finos-aigf/finos-air/versions/0.2.0
+    - id: api
+      title: API form
+      url: https://hub.grc.store/v1/catalogs/Acme/Base_Guidance
+    - id: junk
+      title: grc.store host but no coordinate
+      url: https://grc.store/acme/baseline/extra
+    - id: lex
+      title: Lexicon with no url
+    - id: shelf
+      title: Declared, unused, no url
+imports:
+  - reference-id: ok
+`)
+	a, err := Scan(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := a.Lint()
+	want := []string{
+		`"legacy" url "https://grc.store/search/finos-aigf/finos-air/versions/0.2.0" resolves, but the canonical form is https://grc.store/finos-aigf/finos-air with version: "0.2.0"`,
+		`"api" url "https://hub.grc.store/v1/catalogs/Acme/Base_Guidance" resolves, but the canonical form is https://grc.store/acme/base-guidance`,
+		`"junk" url "https://grc.store/acme/baseline/extra" does not name a grc.store artifact`,
+		`"lex" is used by lexicon but has no url`,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d warnings, want %d:\n%s", len(got), len(want), strings.Join(got, "\n"))
+	}
+	for i, w := range want {
+		if !strings.Contains(got[i], w) {
+			t.Errorf("warning %d = %q, want it to contain %q", i, got[i], w)
+		}
 	}
 }

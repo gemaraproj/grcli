@@ -126,6 +126,7 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 	if err != nil {
 		return err
 	}
+	warnReferences(cmd.ErrOrStderr(), "warning: ", loaded.Body)
 
 	target, err := resolveTarget(ctx, v, loaded)
 	if err != nil {

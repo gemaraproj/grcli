@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	gemara "github.com/gemaraproj/go-gemara"
+	"github.com/revanite-io/grc-store-protocol/slug"
 	"sigs.k8s.io/yaml"
 )
 
@@ -152,14 +153,20 @@ func (a *Artifact) Select(mode Mode) []Selected {
 
 // Recognize decides whether a reference URL points at an artifact resolvable
 // against the targeted hub, and if so extracts its (namespace, catalogID) from
-// the URL path. The version is NOT in the URL — it lives
-// in the MappingReference.version field.
+// the URL path. The version is NOT taken from the URL — it lives in the
+// MappingReference.version field.
 //
 // Rules, given the host of the --url target:
-//   - host "grc.store" is the canonical placeholder: it resolves against the
-//     target (we rewrite to the target hub implicitly by using the target client).
+//   - a grc.store host (grc.store, hub.grc.store, ...) is the canonical
+//     placeholder family: it resolves against the target (we rewrite to the
+//     target hub implicitly by using the target client).
 //   - host exactly equal to targetHost resolves directly.
 //   - any other host is not resolvable here.
+//
+// The path is read by parseCoordinate, a superset of the rule the hub uses
+// to index references (grc.store-backend ResolveReferenceURL, ADR-0040).
+// Segments are slugified with the shared hub rule, so a mixed-case url
+// reaches the row the hub actually indexed.
 //
 // ok=false carries a human reason for the skip report; it is never an error —
 // an unrecognized reference is expected and benign.
@@ -171,12 +178,132 @@ func Recognize(refURL, targetHost string) (namespace, catalogID string, ok bool,
 	if u.Host == "" {
 		return "", "", false, fmt.Sprintf("URL %q has no host (a Gemara reference must be an absolute https URL)", refURL)
 	}
-	if u.Host != "grc.store" && u.Host != targetHost {
+	if !isGrcStoreHost(u.Host) && u.Host != targetHost {
 		return "", "", false, fmt.Sprintf("host %q is neither grc.store nor the targeted hub %q", u.Host, targetHost)
 	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	c, ok := parseCoordinate(u.Path)
+	if !ok {
 		return "", "", false, fmt.Sprintf("path %q is not /{namespace}/{catalog_id}", u.Path)
 	}
-	return parts[0], parts[1], true, ""
+	return c.Namespace, c.CatalogID, true, ""
+}
+
+// Canonical is the one url form for a reference to a hub artifact that every
+// grc.store surface (hub index, web UI, grcli) resolves: the coordinate as it
+// appears in the artifact's page address, with the version in
+// MappingReference.version rather than in the url.
+func Canonical(namespace, catalogID string) string {
+	return "https://grc.store/" + namespace + "/" + catalogID
+}
+
+// coordinate is what parseCoordinate reads out of a url path.
+type coordinate struct {
+	Namespace, CatalogID string
+	// URLVersion is a /versions/<v> suffix, when present. Informational only.
+	URLVersion string
+	// Canonical reports whether the path was already the canonical
+	// /<ns>/<id> form with slug-form segments and no version suffix.
+	Canonical bool
+}
+
+// parseCoordinate reads a hub coordinate out of a url path. Accepted shapes,
+// all with an optional trailing /versions/<v>:
+//
+//	/{ns}/{id}                     canonical UI form
+//	.../v1/catalogs/{ns}/{id}      hub API form (any prefix)
+//	/search/{ns}/{id}              legacy UI form, still found in published catalogs
+//
+// The hub's reference index only knows the first two, and the UI form only
+// without a version suffix; the rest resolve here but earn a Lint warning.
+// Segments are slugified. Empty after slugify → not a coordinate.
+func parseCoordinate(path string) (coordinate, bool) {
+	var segs []string
+	for _, s := range strings.Split(path, "/") {
+		if s != "" {
+			segs = append(segs, s)
+		}
+	}
+	// API form: strip everything through "v1/catalogs".
+	for i := 0; i+1 < len(segs); i++ {
+		if segs[i] == "v1" && segs[i+1] == "catalogs" {
+			segs = segs[i+2:]
+			break
+		}
+	}
+	// Legacy form.
+	if len(segs) > 0 && segs[0] == "search" {
+		segs = segs[1:]
+	}
+	var c coordinate
+	switch {
+	case len(segs) == 2:
+	case len(segs) == 4 && segs[2] == "versions":
+		c.URLVersion = segs[3]
+	default:
+		return coordinate{}, false
+	}
+	c.Namespace, c.CatalogID = slug.Slugify(segs[0]), slug.Slugify(segs[1])
+	if c.Namespace == "" || c.CatalogID == "" {
+		return coordinate{}, false
+	}
+	// Canonical iff nothing was stripped, no version suffix, and every
+	// segment was already in slug form.
+	c.Canonical = strings.Trim(path, "/") == c.Namespace+"/"+c.CatalogID
+	return c, true
+}
+
+// isGrcStoreHost reports whether host is grc.store or a subdomain of it,
+// case- and port-insensitively. Mirrors the hub's hostIsGrcStore.
+func isGrcStoreHost(host string) bool {
+	h := strings.ToLower(host)
+	if i := strings.IndexByte(h, ':'); i >= 0 {
+		h = h[:i]
+	}
+	return h == "grc.store" || strings.HasSuffix(h, ".grc.store")
+}
+
+// Lint returns human-readable warnings about references that look like they
+// were meant to name a grc.store artifact but will not resolve everywhere:
+//   - a relationship (imports/extends/lexicon) whose mapping reference has no
+//     url — nothing can retrieve it;
+//   - a grc.store url whose path is not a coordinate;
+//   - a grc.store url that resolves here but is not the canonical form the
+//     hub index and the web UI agree on (legacy /search/, API path, version
+//     in the url, non-slug segments).
+//
+// Warnings only: a publisher may reference an external standard by any url,
+// and the hub accepts every one of these bodies.
+func (a *Artifact) Lint() []string {
+	var out []string
+	for _, r := range a.MappingRefs {
+		raw := strings.TrimSpace(r.Url)
+		if raw == "" {
+			if cat := a.category[r.Id]; cat != "" {
+				out = append(out, fmt.Sprintf(
+					"mapping reference %q is used by %s but has no url; nothing can resolve it. "+
+						"To reference a grc.store artifact set url: %s", r.Id, cat, Canonical("<namespace>", "<id>")))
+			}
+			continue
+		}
+		u, err := neturl.Parse(raw)
+		if err != nil || !isGrcStoreHost(u.Host) {
+			continue // external standard, or unparseable: not ours to judge
+		}
+		c, ok := parseCoordinate(u.Path)
+		if !ok {
+			out = append(out, fmt.Sprintf(
+				"mapping reference %q url %q does not name a grc.store artifact; the form is %s",
+				r.Id, raw, Canonical("<namespace>", "<id>")))
+			continue
+		}
+		if !c.Canonical {
+			msg := fmt.Sprintf("mapping reference %q url %q resolves, but the canonical form is %s",
+				r.Id, raw, Canonical(c.Namespace, c.CatalogID))
+			if c.URLVersion != "" {
+				msg += fmt.Sprintf(" with version: %q", c.URLVersion)
+			}
+			out = append(out, msg)
+		}
+	}
+	return out
 }

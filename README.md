@@ -161,6 +161,16 @@ separated YAML stream (use `--file <name>` to pick one). With `--with-imports` /
 `references/<category>/<ns>/<id>@<version>/` directory tree plus a
 `references/index.json` (`cat` is primary-only).
 
+A reference is pulled when its `mapping-references[].url` names an artifact on the
+targeted hub. The canonical form is `https://grc.store/<namespace>/<id>`, with the
+version in the reference's `version` field; the hub API path
+(`…/v1/catalogs/<ns>/<id>`), a `/versions/<v>` suffix, the legacy `/search/<ns>/<id>`
+form, and mixed-case segments are also recognised by grcli, though the hub's own
+reference index only records the canonical and API forms. `validate` and `publish`
+print a warning for any grc.store url that is not in the canonical form, and for an
+`imports`/`extends`/`lexicon` reference that has no url at all. Other urls are
+external standards and are skipped.
+
 ### Caching
 
 Remote (`--url`) fetches are served from an on-disk cache: the first pull of a

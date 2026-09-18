@@ -23,6 +23,15 @@ signed multi-platform OCI artifact at `ghcr.io/gemaraproj/grcli`.
   to a directory from a registry or OCI layout.
 - `cat` — stream an artifact's Gemara content to stdout without writing files.
 - `versions <ns>/<id>` — list published versions.
+- `validate` and `publish` warn about a `mapping-references[].url` that points
+  at grc.store but is not the canonical `https://grc.store/<ns>/<id>` form, or
+  about an `imports`/`extends`/`lexicon` reference with no url. Warnings only;
+  nothing is rewritten or refused.
+- `unpack --with-references` / `--with-imports` now recognise more reference
+  url forms: the hub API path, a `/versions/<v>` suffix, the legacy
+  `/search/<ns>/<id>` form, and mixed-case segments (slugified with the shared
+  `grc-store-protocol/slug` rule, so they reach the row the hub indexed). Only
+  the canonical and API forms are also indexed by the hub's reference graph.
 - On-disk cache for remote fetches at `$GRCLI_CACHE`; `--no-cache` per run,
   `cache-enabled: false` to disable.
 - Single user-global config at `$XDG_CONFIG_HOME/grcli/config.yaml`, with
