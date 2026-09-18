@@ -163,7 +163,7 @@ func TestRecognizeWidenedShapes(t *testing.T) {
 		{"hub api form on prod host while targeting preview", "https://hub.grc.store/v1/catalogs/acme/baseline", true, "acme", "baseline"},
 		{"hub api form with version", "https://hub.grc.store/v1/catalogs/acme/baseline/versions/2.0", true, "acme", "baseline"},
 		{"legacy search form", "https://grc.store/search/finos-aigf/finos-air/versions/0.2.0", true, "finos-aigf", "finos-air"},
-		{"ui form with version suffix", "https://grc.store/acme/baseline/versions/1.0", true, "acme", "baseline"},
+		{"ui form with version suffix is not a coordinate (ruled 2026-09-18)", "https://grc.store/acme/baseline/versions/1.0", false, "", ""},
 		{"mixed case slugifies to the indexed row", "https://grc.store/FINOS-CCC/CCC.Core.CN", true, "finos-ccc", "ccc.core.cn"},
 		{"percent-encoded segment", "https://grc.store/FINOS%20CCC/ccc.objstor.cp", true, "finos-ccc", "ccc.objstor.cp"},
 		{"api form on a foreign host is not fetched from the target", "https://hub.example.org/v1/catalogs/acme/baseline", false, "", ""},

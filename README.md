@@ -163,11 +163,12 @@ separated YAML stream (use `--file <name>` to pick one). With `--with-imports` /
 
 A reference is pulled when its `mapping-references[].url` names an artifact on the
 targeted hub. The canonical form is `https://grc.store/<namespace>/<id>`, with the
-version in the reference's `version` field; the hub API path
-(`…/v1/catalogs/<ns>/<id>`), a `/versions/<v>` suffix, the legacy `/search/<ns>/<id>`
-form, and mixed-case segments are also recognised by grcli, though the hub's own
-reference index only records the canonical and API forms. `validate` and `publish`
-print a warning for any grc.store url that is not in the canonical form, and for an
+version in the reference's `version` field. The hub API path
+(`…/v1/catalogs/<ns>/<id>`), the legacy `/search/<ns>/<id>` form, and mixed-case
+segments are also recognised, by grcli and by the hub's reference index alike (both
+follow `grc-store-protocol/refurl`); a `/versions/<v>` suffix on the canonical form is
+not. `validate` and `publish` print a warning for any grc.store url that is not in the
+canonical form, and for an
 `imports`/`extends`/`lexicon` reference that has no url at all. Other urls are
 external standards and are skipped.
 

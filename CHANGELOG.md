@@ -27,11 +27,12 @@ signed multi-platform OCI artifact at `ghcr.io/gemaraproj/grcli`.
   at grc.store but is not the canonical `https://grc.store/<ns>/<id>` form, or
   about an `imports`/`extends`/`lexicon` reference with no url. Warnings only;
   nothing is rewritten or refused.
-- `unpack --with-references` / `--with-imports` now recognise more reference
-  url forms: the hub API path, a `/versions/<v>` suffix, the legacy
-  `/search/<ns>/<id>` form, and mixed-case segments (slugified with the shared
-  `grc-store-protocol/slug` rule, so they reach the row the hub indexed). Only
-  the canonical and API forms are also indexed by the hub's reference graph.
+- `unpack --with-references` / `--with-imports` decide whether a url names a
+  hub artifact with the shared `grc-store-protocol/refurl` rule, the same one
+  the hub index and the web UI follow: the hub API path, the legacy
+  `/search/<ns>/<id>` form, and mixed-case segments (slugified) all resolve.
+  A version suffix on `https://grc.store/<ns>/<id>` does not; the version
+  belongs in the reference's `version` field.
 - On-disk cache for remote fetches at `$GRCLI_CACHE`; `--no-cache` per run,
   `cache-enabled: false` to disable.
 - Single user-global config at `$XDG_CONFIG_HOME/grcli/config.yaml`, with
