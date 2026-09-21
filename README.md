@@ -125,7 +125,7 @@ bundle's own metadata**:
 `slugify` replaces every run of characters outside `[a-zA-Z0-9._-]` with a
 single `-`, trims leading/trailing `-`, `_`, and `.`, and lowercases the
 result. So a bundle with `author.id: TAG-SC` and `id: cnsc` publishes to
-`tag-sc/cnsc` — regardless of which organization you are a member of.
+`tag-sc/cnsc` — regardless of which namespace you are a member of.
 
 **This is the usual cause of a 403 on publish.** Authorization is per
 *namespace* (the part before the `/`), so you must own — or hold a trusted
@@ -259,7 +259,7 @@ that `permissions: id-token: write` enables. The hub validates the
 token's `iss` (GitHub) and `sub` (your repo/ref) against its
 trusted-publisher bindings.
 
-**One-time setup, done on the hub — not in your repo:** an org admin
+**One-time setup, done on the hub — not in your repo:** a namespace admin
 adds your repo (`owner/repo`, optionally pinned to a ref) on the hub
 as a Trusted CI publisher for the namespace your bundles publish
 under — which is derived from the bundle's own metadata, **not** chosen

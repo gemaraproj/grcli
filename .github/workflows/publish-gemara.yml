@@ -10,7 +10,7 @@
 # for cosign keyless signing. `id-token: write` is the entire auth setup — do
 # NOT add GRCLI_TOKEN, a PAT, or any `secrets.*` reference.
 #
-# Prerequisite (one-time, by a hub/org admin — NOT in the caller's repo):
+# Prerequisite (one-time, by a hub or namespace admin — NOT in the caller's repo):
 # register the calling repository (owner/repo, optionally ref-pinned) as a
 # Trusted CI publisher for the target namespace. Without that binding the hub
 # returns 403; adding a GitHub secret will not fix it.

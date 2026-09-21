@@ -7,7 +7,7 @@
 # write` below is the entire auth setup — that's what lets the runtime
 # mint an OIDC token grcli can present to the hub.
 #
-# Prerequisite (one-time, by an org admin on the hub — NOT in your repo):
+# Prerequisite (one-time, by a namespace admin on the hub — NOT in your repo):
 # add this repository (owner/repo) as a Trusted CI publisher for the
 # target namespace, optionally pinned to a single git ref. Without that
 # binding the hub returns 403; adding a GitHub secret will not fix it.
