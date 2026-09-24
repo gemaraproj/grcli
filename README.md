@@ -94,6 +94,11 @@ grcli validate -f controls.yaml --spec /path/to/gemara
 # --no-sign. Keyless signing is CI-only — see "Signing" further down.
 grcli publish -f controls.yaml --license Apache-2.0 --cosign-key cosign.key
 
+# The OCI tag is metadata.version. --version stamps a value into the
+# bundle before packing — filling it in for a draft that omits it, or
+# overriding the file's value from a release pipeline:
+grcli publish -f controls.yaml --license Apache-2.0 --version 1.0.0-rc1 --dry-run
+
 # Verify a published bundle — zero-flag: uses the signer identity the hub
 # recorded at ingest (prints it, and that it came from the hub, before verifying)
 grcli verify --repository myorg/my-controls --version 1.0.0

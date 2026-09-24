@@ -28,10 +28,10 @@ import (
 )
 
 // Flag names are declared once so the compiler catches typos at every
-// viper.Get call site. publish does not expose a tag/version flag —
-// the OCI tag is always metadata.version. unpack and verify
-// take --version (see flagVersion in unpack.go) to address a published
-// bundle.
+// viper.Get call site. publish exposes no --tag: the OCI tag is always
+// metadata.version. Its --version (flagVersion, shared with unpack and
+// verify) sets metadata.version from the command line — it is stamped
+// into the body first, so the tag still equals the body.
 const (
 	flagFile       = "file"
 	flagURL        = "url"
@@ -60,6 +60,11 @@ mixing them is an error so neither silently wins.
 Use --dry-run to write the bundle to an OCI image layout on disk
 instead of touching any network.
 
+The OCI tag is metadata.version. --version stamps a value into the
+bundle's metadata.version before packing — filling it in for a file that
+omits it (the Gemara schema allows that for drafts) or overriding the
+file's value, e.g. a pipeline publishing 1.0.0-rc1.
+
 Auth in GitHub Actions: no GitHub secret, no --token, no GRCLI_TOKEN —
 when run inside a workflow with permissions: id-token: write, grcli
 mints a GitHub Actions OIDC token and presents it as the credential
@@ -82,6 +87,7 @@ need to set a secret.`,
 	flags.String(flagOutput, "grcli-out", "directory to write the OCI layout to when --dry-run")
 	flags.Bool(flagNoSign, false, "skip cosign signing even when material is available")
 	flags.String(flagCosignKey, "", "cosign key file for local signing (or COSIGN_KEY)")
+	flags.String(flagVersion, "", "artifact version; stamped into the bundle's metadata.version (overriding the file's value) and used as the OCI tag")
 	flags.String(flagLicense, "", "REQUIRED: publication license as an SPDX expression (e.g. Apache-2.0, MIT OR Apache-2.0, LicenseRef-Acme-Proprietary); stamped as the org.opencontainers.image.licenses OCI annotation. Publish fails before any network call if unset")
 
 	// Flags are bound to viper inside RunE (see runPublish) rather than
@@ -124,6 +130,9 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 
 	loaded, err := source.Load(ctx, files)
 	if err != nil {
+		return err
+	}
+	if err := applyVersionFlag(v, loaded, cmd.ErrOrStderr()); err != nil {
 		return err
 	}
 	warnReferences(cmd.ErrOrStderr(), "warning: ", loaded.Body)
@@ -222,6 +231,22 @@ type signContext struct {
 	plainHTTP      bool
 }
 
+// applyVersionFlag lets --version supersede the file's metadata.version.
+// Pipelines stamp release-specific values (1.0.0-rc1) over whatever the
+// file says, so the flag wins and is written into the body — the hub
+// enforces tag == metadata.version, so the two can never be allowed to
+// differ. An override is noted on stderr so the log shows it.
+func applyVersionFlag(v *viper.Viper, loaded *source.Loaded, stderr io.Writer) error {
+	want := v.GetString(flagVersion)
+	if want == "" || want == loaded.Version {
+		return nil
+	}
+	if loaded.Version != "" {
+		fmt.Fprintf(stderr, "note: --version %s overrides metadata.version %s\n", want, loaded.Version)
+	}
+	return loaded.SetVersion(want)
+}
+
 // resolveTarget merges --repository/--url/--dry-run with the
 // metadata-derived defaults and validates the combination. --url drives
 // the registry hostname via the hub's discovery endpoint;
@@ -234,7 +259,7 @@ type signContext struct {
 func resolveTarget(ctx context.Context, v *viper.Viper, loaded *source.Loaded) (publishTarget, error) {
 	tag := loaded.Version
 	if tag == "" {
-		return publishTarget{}, errors.New("could not determine tag — metadata.version is required")
+		return publishTarget{}, errors.New("could not determine tag — metadata.version is required (or pass --version)")
 	}
 	repository := cmp.Or(v.GetString(flagRepository), defaultRepository(loaded.AuthorID, loaded.ID))
 	if repository == "" {
