@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -272,5 +273,34 @@ func TestGrcliApp_NoTokenErrorNamesTheFlag(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Errorf("no-token error should name %q, got: %s", want, msg)
 		}
+	}
+}
+
+func TestApplyVersionFlag(t *testing.T) {
+	body := "metadata:\n  id: p\n  type: Policy\n"
+	tests := []struct {
+		name, flag, fileVersion, wantVersion string
+	}{
+		{name: "no-flag", fileVersion: "1.0.0", wantVersion: "1.0.0"},
+		{name: "flag-fills-gap", flag: "1.0.0", wantVersion: "1.0.0"},
+		{name: "flag-agrees", flag: "1.0.0", fileVersion: "1.0.0", wantVersion: "1.0.0"},
+		{name: "flag-overrides", flag: "1.0.0-rc1", fileVersion: "1.0.0", wantVersion: "1.0.0-rc1"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			v := viper.New()
+			v.Set(flagVersion, tc.flag)
+			loaded := &source.Loaded{Filename: "p.yaml", Version: tc.fileVersion, Body: []byte(body)}
+			var stderr bytes.Buffer
+			require.NoError(t, applyVersionFlag(v, loaded, &stderr))
+			require.Equal(t, tc.wantVersion, loaded.Version)
+			if tc.flag == "" || tc.flag == tc.fileVersion {
+				require.Equal(t, body, string(loaded.Body), "body untouched")
+				require.Empty(t, stderr.String())
+			} else {
+				require.Contains(t, string(loaded.Body), "version: "+tc.flag)
+				require.Equal(t, tc.fileVersion != "", strings.Contains(stderr.String(), "overrides"))
+			}
+		})
 	}
 }
