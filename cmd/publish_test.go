@@ -294,11 +294,10 @@ func TestApplyVersionFlag(t *testing.T) {
 			var stderr bytes.Buffer
 			require.NoError(t, applyVersionFlag(v, loaded, &stderr))
 			require.Equal(t, tc.wantVersion, loaded.Version)
-			switch {
-			case tc.flag == "" || tc.flag == tc.fileVersion:
+			if tc.flag == "" || tc.flag == tc.fileVersion {
 				require.Equal(t, body, string(loaded.Body), "body untouched")
 				require.Empty(t, stderr.String())
-			default:
+			} else {
 				require.Contains(t, string(loaded.Body), "version: "+tc.flag)
 				require.Equal(t, tc.fileVersion != "", strings.Contains(stderr.String(), "overrides"))
 			}
