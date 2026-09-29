@@ -5,6 +5,7 @@
 package source
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 
 	gemara "github.com/gemaraproj/go-gemara"
 	"github.com/gemaraproj/go-gemara/fetcher"
+	yamlv3 "go.yaml.in/yaml/v3"
 	"sigs.k8s.io/yaml"
 
 	"github.com/gemaraproj/grcli/internal/digest"
@@ -168,4 +170,57 @@ func digestAll(paths []string) (map[string]string, error) {
 		digests[path] = hashed
 	}
 	return digests, nil
+}
+
+// SetVersion stamps version into the body's metadata.version and records
+// it on Loaded. The Gemara schema leaves metadata.version optional (drafts
+// need no version) but the hub refuses an unversioned bundle and requires
+// the OCI tag to equal metadata.version, so a version supplied on the
+// command line has to land in the body, not just on the tag. The edit is
+// node-level so comments and key order in the author's file survive.
+func (l *Loaded) SetVersion(version string) error {
+	var doc yamlv3.Node
+	if err := yamlv3.Unmarshal(l.Body, &doc); err != nil {
+		return fmt.Errorf("parsing %s: %w", l.Filename, err)
+	}
+	if doc.Kind != yamlv3.DocumentNode || len(doc.Content) != 1 {
+		return fmt.Errorf("%s: expected a single YAML document", l.Filename)
+	}
+	meta := mappingValue(doc.Content[0], "metadata")
+	if meta == nil || meta.Kind != yamlv3.MappingNode {
+		return fmt.Errorf("%s: metadata must be a mapping", l.Filename)
+	}
+	// Tag !!str so a numeric-looking version ("1.0") is emitted quoted and
+	// still reads back as a string.
+	val := &yamlv3.Node{Kind: yamlv3.ScalarNode, Tag: "!!str", Value: version}
+	if existing := mappingValue(meta, "version"); existing != nil {
+		*existing = *val
+	} else {
+		meta.Content = append(meta.Content, &yamlv3.Node{Kind: yamlv3.ScalarNode, Value: "version"}, val)
+	}
+	var buf bytes.Buffer
+	enc := yamlv3.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return fmt.Errorf("re-encoding %s: %w", l.Filename, err)
+	}
+	if err := enc.Close(); err != nil {
+		return err
+	}
+	l.Body = buf.Bytes()
+	l.Version = version
+	return nil
+}
+
+// mappingValue returns the value node for key in a mapping node, or nil.
+func mappingValue(m *yamlv3.Node, key string) *yamlv3.Node {
+	if m.Kind != yamlv3.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return m.Content[i+1]
+		}
+	}
+	return nil
 }

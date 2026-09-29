@@ -129,3 +129,29 @@ func TestLoad_NoFiles_Errors(t *testing.T) {
 	_, err := Load(context.Background(), nil)
 	require.Error(t, err)
 }
+
+func TestSetVersion_StampsBodyAndKeepsComments(t *testing.T) {
+	l := &Loaded{Filename: "p.yaml", Body: []byte("# top\nmetadata:\n  id: my-policy # keep\n  type: Policy\nrules: []\n")}
+	require.NoError(t, l.SetVersion("1.0"))
+	require.Equal(t, "1.0", l.Version)
+	body := string(l.Body)
+	require.Contains(t, body, "# top")
+	require.Contains(t, body, "id: my-policy # keep")
+	require.Contains(t, body, `version: "1.0"`, "numeric-looking versions must stay strings")
+	require.Less(t, strings.Index(body, "id:"), strings.Index(body, "version:"), "key order preserved")
+
+	// Round-trips through the same peek the loader uses.
+	var peek peekedMetadata
+	require.NoError(t, readYAML(writeFile(t, t.TempDir(), "p.yaml", body), &peek))
+	require.Equal(t, "1.0", peek.Metadata.Version)
+
+	// An empty existing key is filled in place, not duplicated.
+	l.Body = []byte("metadata:\n  version: \"\"\n  id: x\n")
+	require.NoError(t, l.SetVersion("2.0.0"))
+	require.Equal(t, 1, strings.Count(string(l.Body), "version:"))
+}
+
+func TestSetVersion_NoMetadataMapping_Errors(t *testing.T) {
+	l := &Loaded{Filename: "p.yaml", Body: []byte("metadata: nope\n")}
+	require.ErrorContains(t, l.SetVersion("1.0.0"), "metadata must be a mapping")
+}
