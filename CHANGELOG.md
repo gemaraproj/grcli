@@ -12,7 +12,13 @@ signed multi-platform OCI artifact at `ghcr.io/gemaraproj/grcli`.
 
 - `login` / `logout` — OIDC device-flow sign-in to a hub, credentials stored
   at `$XDG_DATA_HOME/grcli/credentials.json`.
-- `validate` — check Gemara YAML against the spec via `cue vet`.
+- `validate` — check Gemara YAML against the spec via `cue vet`. The schemas
+  come from the CUE central registry (`github.com/gemaraproj/gemara`), at the
+  version in each file's `metadata.gemara-version` (else the latest), so no
+  spec checkout is needed. `--gemara-version` pins one version for every
+  file; `--spec` / `GRCLI_GEMARA_SPEC_DIR` validates against a local checkout
+  instead. `metadata.type` and `metadata.gemara-version` must be a plain
+  type name and a plain version; anything else fails before `cue` runs.
 - `publish` — pack an artifact plus SLSA-shaped provenance into an OCI bundle,
   sign it, push it, and notify the hub. `--license` (an SPDX expression) is
   required. Keyless signing runs in-process via `sigstore-go` using the
