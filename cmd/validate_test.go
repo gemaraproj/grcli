@@ -37,11 +37,21 @@ contacts:
     - name: Accountable
 `
 
+// skipOrFail skips a test whose external prerequisite is missing — except
+// in CI, where a silent skip would leave validate's default path untested.
+func skipOrFail(t *testing.T, format string, args ...any) {
+	t.Helper()
+	if os.Getenv("CI") != "" {
+		t.Fatalf("required in CI: "+format, args...)
+	}
+	t.Skipf(format, args...)
+}
+
 // requireCue skips tests that shell out to cue when the binary is absent.
 func requireCue(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("cue"); err != nil {
-		t.Skip("cue binary not on PATH")
+		skipOrFail(t, "cue binary not on PATH")
 	}
 }
 
@@ -52,7 +62,7 @@ func requireRegistry(t *testing.T) {
 	requireCue(t)
 	conn, err := net.DialTimeout("tcp", "registry.cue.works:443", 3*time.Second)
 	if err != nil {
-		t.Skipf("CUE central registry unreachable: %v", err)
+		skipOrFail(t, "CUE central registry unreachable: %v", err)
 	}
 	_ = conn.Close()
 	// isolatedWorkdir points HOME at the test workdir; keep cue's module

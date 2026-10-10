@@ -22,6 +22,11 @@ jobs:
       - run: make fmtcheck
       - run: make vet
       - run: make tidycheck
+      # validate shells out to cue and resolves the Gemara module from the CUE
+      # central registry; without cue those tests would be skipped.
+      - uses: cue-lang/setup-cue@b0e30e540a2dae47304ebf16586a5b2db023b61c # v2.0.0
+        with:
+          version: v0.17.1
       - run: make testcov
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
