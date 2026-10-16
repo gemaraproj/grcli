@@ -5,7 +5,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/gemaraproj/go-gemara/bundle"
 	"github.com/spf13/cobra"
@@ -29,9 +28,8 @@ The source can be a local OCI image layout (--source) or a remote registry
 discovered from the hub (--url plus --repository). Exactly one must be set,
 plus --version.
 
-A single-file bundle prints that file verbatim. A bundle with several files
-prints them as a YAML multi-document stream (--- separated); use --file <name>
-to print just one. Caching behaves exactly as for 'grcli unpack':
+The bundle's artifact prints verbatim. --file <name> must name that
+artifact. Caching behaves exactly as for 'grcli unpack':
 a remote fetch is served from the on-disk cache when warm; --no-cache forces a
 fresh pull. Cache diagnostics go to stderr so stdout stays pipe-clean.
 
@@ -56,7 +54,7 @@ Examples:
 	flags.String(flagURL, defaultURL, "grc.store base URL (discovers the registry)")
 	flags.String(flagRepository, "", "repository path within the registry (requires --url)")
 	flags.String(flagVersion, "", "artifact version to print — the metadata.version of the published bundle (required)")
-	flags.String(flagFile, "", "print only the named file (for bundles carrying more than one)")
+	flags.String(flagFile, "", "print the artifact only if it has this file name")
 	flags.Bool(flagNoCache, false, "bypass the local artifact cache for this run; set cache-enabled: false in config to disable it durably")
 
 	// Bind at RunE time, not here — see comment in newPublishCmd.
@@ -98,56 +96,26 @@ func noteCatOmittedImports(w io.Writer, n int) {
 	fmt.Fprintf(w, "! bundle carries %d import(s) not included in cat output — use 'grcli unpack' to materialize them\n", n)
 }
 
-// catBundle writes a bundle's Gemara content to out: the selected file when
-// --file is given, else the sole file verbatim, else a --- separated YAML
-// multi-document stream. A single file (or a --file selection) is written
-// byte-for-byte; only the multi-document stream inserts separators (and a
-// newline before one when a preceding doc lacks its own). It never writes
-// bundle.json.
+// catBundle writes a bundle's artifact to out byte-for-byte. When fileName is
+// set it must name that artifact. It never writes bundle.json.
 func catBundle(b *bundle.Bundle, fileName string, out io.Writer) error {
-	if fileName != "" {
-		for i := range b.Files {
-			if b.Files[i].Name == fileName {
-				_, err := out.Write(b.Files[i].Data)
-				return err
-			}
-		}
-		return fmt.Errorf("no file named %q in bundle (have: %s)", fileName, strings.Join(fileNames(b.Files), ", "))
-	}
-
-	switch len(b.Files) {
-	case 0:
+	files := artifactFiles(b)
+	if len(files) == 0 {
 		return fmt.Errorf("bundle has no artifact files")
-	case 1:
-		_, err := out.Write(b.Files[0].Data)
-		return err
-	default:
-		for i := range b.Files {
-			if i > 0 {
-				if _, err := io.WriteString(out, "---\n"); err != nil {
-					return err
-				}
-			}
-			data := b.Files[i].Data
-			if _, err := out.Write(data); err != nil {
-				return err
-			}
-			// The next separator must start on its own line.
-			last := i == len(b.Files)-1
-			if !last && (len(data) == 0 || data[len(data)-1] != '\n') {
-				if _, err := io.WriteString(out, "\n"); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
 	}
+	if fileName != "" && fileName != files[0].Name {
+		return fmt.Errorf("no file named %q in bundle (have: %s)", fileName, files[0].Name)
+	}
+	_, err := out.Write(files[0].Data)
+	return err
 }
 
-func fileNames(files []bundle.File) []string {
-	names := make([]string, len(files))
-	for i, f := range files {
-		names[i] = f.Name
+// artifactFiles returns a bundle's artifact files: its Source, when set.
+// go-gemara models a bundle as one Source artifact plus Imports, so a bundle
+// has at most one artifact file. Imports are handled separately.
+func artifactFiles(b *bundle.Bundle) []bundle.File {
+	if b.Source.Name == "" {
+		return nil
 	}
-	return names
+	return []bundle.File{b.Source}
 }

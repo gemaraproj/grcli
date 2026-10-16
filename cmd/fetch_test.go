@@ -34,10 +34,7 @@ func tempCache(t *testing.T) *cache.Cache {
 func TestPutBundleRoundtrip(t *testing.T) {
 	c := tempCache(t)
 	orig := &bundle.Bundle{
-		Files: []bundle.File{
-			{Name: "controls.yaml", Type: "ControlCatalog", Data: []byte("id: acme\n")},
-			{Name: "mappings.yaml", Type: "Mapping", Data: []byte("maps: []\n")},
-		},
+		Source: bundle.File{Name: "controls.yaml", Type: "ControlCatalog", Data: []byte("id: acme\n")},
 		Manifest: bundle.Manifest{
 			BundleVersion: "1",
 			GemaraVersion: "0.5.0",
@@ -74,14 +71,9 @@ func TestPutBundleRoundtrip(t *testing.T) {
 		t.Fatalf("bundleFromEntry: %v", err)
 	}
 
-	if len(got.Files) != len(orig.Files) {
-		t.Fatalf("got %d files, want %d", len(got.Files), len(orig.Files))
-	}
-	for i := range orig.Files {
-		if got.Files[i].Name != orig.Files[i].Name || !bytes.Equal(got.Files[i].Data, orig.Files[i].Data) {
-			t.Errorf("file %d = {%q,%q}, want {%q,%q}", i,
-				got.Files[i].Name, got.Files[i].Data, orig.Files[i].Name, orig.Files[i].Data)
-		}
+	if got.Source.Name != orig.Source.Name || !bytes.Equal(got.Source.Data, orig.Source.Data) {
+		t.Errorf("source = {%q,%q}, want {%q,%q}",
+			got.Source.Name, got.Source.Data, orig.Source.Name, orig.Source.Data)
 	}
 	if got.Etag != orig.Etag {
 		t.Errorf("Etag = %q, want %q", got.Etag, orig.Etag)
@@ -97,7 +89,7 @@ func TestPutBundleRoundtrip(t *testing.T) {
 func TestPutBundleSkipsWhenImportsPresent(t *testing.T) {
 	c := tempCache(t)
 	b := &bundle.Bundle{
-		Files:   []bundle.File{{Name: "controls.yaml", Data: []byte("id: acme\n")}},
+		Source:  bundle.File{Name: "controls.yaml", Data: []byte("id: acme\n")},
 		Imports: []bundle.File{{Name: "dep.yaml", Data: []byte("id: dep\n")}},
 	}
 	var out bytes.Buffer
@@ -123,7 +115,7 @@ func TestResolveBundle_CacheHitSkipsNetwork(t *testing.T) {
 
 	// Seed the cache at exactly the coordinate resolveBundle will compute.
 	seed := &bundle.Bundle{
-		Files:    []bundle.File{{Name: "controls.yaml", Data: []byte("id: from-cache\n")}},
+		Source:   bundle.File{Name: "controls.yaml", Data: []byte("id: from-cache\n")},
 		Manifest: bundle.Manifest{BundleVersion: "1", GemaraVersion: "0.5.0"},
 		Etag:     "sha256:abc",
 	}
@@ -153,7 +145,7 @@ func TestResolveBundle_NoCacheBypassesHit(t *testing.T) {
 	c := tempCache(t)
 	workdir := isolatedWorkdir(t)
 	const url = "https://hub.invalid.test"
-	seed := &bundle.Bundle{Files: []bundle.File{{Name: "controls.yaml", Data: []byte("id: from-cache\n")}}}
+	seed := &bundle.Bundle{Source: bundle.File{Name: "controls.yaml", Data: []byte("id: from-cache\n")}}
 	putBundle(c, hostOf(url), "acme", "controls", "1.0.0", seed, io.Discard)
 
 	_, err := runRootExpectErr(t, "unpack", "--url", url, "--repository", "acme/controls",
@@ -170,8 +162,21 @@ func TestBundleFromEntryNoManifest(t *testing.T) {
 	if !b.Manifest.Empty() {
 		t.Errorf("manifest should be empty, got %+v", b.Manifest)
 	}
-	if len(b.Files) != 1 || string(b.Files[0].Data) != `{"a":1}` {
-		t.Errorf("files = %+v", b.Files)
+	if b.Source.Name != "body.json" || string(b.Source.Data) != `{"a":1}` {
+		t.Errorf("source = %+v", b.Source)
+	}
+}
+
+// An entry written by an older grcli can hold several artifact files, which a
+// bundle can no longer carry. bundleFromEntry must reject it so the caller
+// treats it as a miss and re-fetches.
+func TestBundleFromEntryRejectsMultiFileEntry(t *testing.T) {
+	e := &cache.Entry{Files: []cache.File{
+		{Name: "a.yaml", Data: []byte("id: a\n")},
+		{Name: "b.yaml", Data: []byte("id: b\n")},
+	}}
+	if _, err := bundleFromEntry(e); err == nil {
+		t.Error("expected an error for a cached entry with two artifact files")
 	}
 }
 

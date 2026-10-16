@@ -44,7 +44,7 @@ type File struct {
 
 // Entry is a cached bundle plus the metadata recorded about it.
 type Entry struct {
-	// Files are the bundle's artifact files (bundle.Files), in order.
+	// Files are the bundle's artifact files (its Source), in order.
 	Files []File
 	// Manifest is the bundle.json bytes (the JSON-encoded OCI manifest, with any
 	// SLSA-shaped provenance). Nil for an entry that carries no manifest.
