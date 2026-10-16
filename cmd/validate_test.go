@@ -3,7 +3,8 @@
 package cmd
 
 import (
-	"net"
+	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -56,15 +57,10 @@ func requireCue(t *testing.T) {
 }
 
 // requireRegistry skips tests that resolve the Gemara module from the CUE
-// central registry when it cannot be reached (offline dev, sandboxed CI).
+// configured registry when cue cannot resolve it (offline dev, sandboxed CI).
 func requireRegistry(t *testing.T) {
 	t.Helper()
 	requireCue(t)
-	conn, err := net.DialTimeout("tcp", "registry.cue.works:443", 3*time.Second)
-	if err != nil {
-		skipOrFail(t, "CUE central registry unreachable: %v", err)
-	}
-	_ = conn.Close()
 	// isolatedWorkdir points HOME at the test workdir; keep cue's module
 	// cache out of it so tests can assert the workdir stays clean.
 	cacheDir := t.TempDir()
@@ -79,6 +75,12 @@ func requireRegistry(t *testing.T) {
 			return nil
 		})
 	})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	probe := exec.CommandContext(ctx, "cue", "export", gemaraModule+"@v0.20.0", "-e", "{}")
+	if output, err := probe.CombinedOutput(); err != nil {
+		skipOrFail(t, "CUE registry resolution failed: %v\n%s", err, output)
+	}
 }
 
 // writeLocalSpec lays down a throwaway CUE module standing in for a Gemara
@@ -225,6 +227,32 @@ func TestVetArgs(t *testing.T) {
 	})
 }
 
+func TestVetFile_Deadline(t *testing.T) {
+	dir := t.TempDir()
+	cue := writeTempFile(t, dir, "cue", "#!/bin/sh\nexec sleep 60\n")
+	require.NoError(t, os.Chmod(cue, 0o700))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	t.Run("default-timeout", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+		defer cancel()
+		start := time.Now()
+		err := vetFile(ctx, "", "v1.6.0", "Policy", "policy.yaml", io.Discard)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		elapsed := time.Since(start)
+		require.GreaterOrEqual(t, elapsed, 25*time.Second, "cue must have time to resolve and validate")
+		require.Less(t, elapsed, 35*time.Second, "cue must stop before the caller's deadline")
+	})
+	t.Run("earlier-parent-deadline", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		start := time.Now()
+		err := vetFile(ctx, dir, "", "Policy", "policy.yaml", io.Discard)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.Less(t, time.Since(start), 5*time.Second)
+	})
+}
+
 func TestValidate_Registry_HappyPath(t *testing.T) {
 	requireRegistry(t)
 
@@ -301,6 +329,42 @@ func TestValidate_LocalSpec_IgnoresVersionEnv(t *testing.T) {
 	out := runRoot(t, "validate", "-f", input, "--spec", specDir)
 	require.Contains(t, out, "OK")
 	require.NotContains(t, out, "gemara v")
+}
+
+func TestValidate_LocalSpec_VersionWarning(t *testing.T) {
+	requireCue(t)
+	for _, tc := range []struct {
+		name     string
+		version  string
+		specFlag bool
+		wantWarn bool
+	}{
+		{name: "both-env", version: "1.6.0", wantWarn: true},
+		{name: "explicit-spec", version: "1.6.0", specFlag: true},
+		{name: "empty-version"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workdir := isolatedWorkdir(t)
+			specDir := writeLocalSpec(t)
+			t.Setenv(envSpecPath, specDir)
+			t.Setenv("GRCLI_GEMARA_VERSION", tc.version)
+			input := writeTempFile(t, workdir, "policy.yaml", minimalValidPolicy)
+			args := []string{"validate", "-f", input}
+			if tc.specFlag {
+				args = append(args, "--spec", specDir)
+			}
+			stdout, stderr, err := executeRootSplit(args...)
+			require.NoError(t, err)
+			require.Contains(t, stdout, "OK")
+			require.NotContains(t, stdout, "warning:")
+			if tc.wantWarn {
+				require.Contains(t, stderr, "ignoring GRCLI_GEMARA_VERSION")
+				require.Contains(t, stderr, envSpecPath)
+			} else {
+				require.Empty(t, stderr)
+			}
+		})
+	}
 }
 
 func TestValidate_LocalSpec_HappyPath(t *testing.T) {

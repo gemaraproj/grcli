@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -30,6 +31,7 @@ const (
 
 	// latestVersion is cue's query for the newest published version.
 	latestVersion = "latest"
+	vetTimeout    = 30 * time.Second
 )
 
 func newValidateCmd(v *viper.Viper) *cobra.Command {
@@ -54,6 +56,7 @@ beats the other setting's environment value.
 
 Requires the 'cue' binary on PATH (see https://cuelang.org). A private or
 mirrored registry can be selected with cue's own CUE_REGISTRY variable.
+Each cue invocation has a 30-second timeout.
 
 Examples:
   grcli validate -f controls.yaml
@@ -103,6 +106,8 @@ func runValidate(cmd *cobra.Command, v *viper.Viper) error {
 		if _, err := gemaraVersion(versionOverride, ""); err != nil {
 			return fmt.Errorf("--%s: %w", flagGemaraVersion, err)
 		}
+	} else if !cmd.Flags().Changed(flagSpec) && strings.TrimSpace(os.Getenv("GRCLI_GEMARA_VERSION")) != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "grcli: warning: ignoring GRCLI_GEMARA_VERSION because a local spec is selected (%s / spec config); the checkout fixes the version\n", envSpecPath)
 	}
 
 	if _, err := exec.LookPath("cue"); err != nil {
@@ -251,6 +256,9 @@ func vetArgs(specDir, version, artifactType, absFile string) []string {
 // vetted. Any output from cue is forwarded to out so users see schema
 // violations inline.
 func vetFile(ctx context.Context, specDir, version, artifactType, file string, out io.Writer) error {
+	ctx, cancel := context.WithTimeout(ctx, vetTimeout)
+	defer cancel()
+
 	absFile, err := filepath.Abs(file)
 	if err != nil {
 		return fmt.Errorf("resolving file path: %w", err)
@@ -260,6 +268,9 @@ func vetFile(ctx context.Context, specDir, version, artifactType, file string, o
 	cmd.Stdout = out
 	cmd.Stderr = out
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("cue vet interrupted: %w", ctx.Err())
+		}
 		return fmt.Errorf("cue vet exited with: %w", err)
 	}
 	return nil
