@@ -39,3 +39,14 @@ signed multi-platform OCI artifact at `ghcr.io/gemaraproj/grcli`.
   `GRCLI_*` env overrides and `--config <file>` to bypass.
 - Reusable GitHub Actions workflow (`.github/workflows/publish-gemara.yml`)
   and install action (`.github/actions/install`).
+- `validate` resolves the Gemara schemas from the CUE central registry
+  (`github.com/gemaraproj/gemara`) at the version in each file's
+  `metadata.gemara-version` (else the latest), so no spec checkout is needed.
+  `--gemara-version` / `GRCLI_GEMARA_VERSION` pins one version for every file;
+  `--spec` / `GRCLI_GEMARA_SPEC_DIR` validates against a local checkout
+  instead. `metadata.type` and `metadata.gemara-version` must be a plain type
+  name and a plain version; anything else fails before `cue` runs. `OK`/`FAIL`
+  lines now include the Gemara version, e.g. `(#Policy, gemara v1.6.0)`.
+  Each `cue vet` invocation has a 30-second timeout. If both environment
+  settings are set, the local spec wins with a warning on stderr that
+  `GRCLI_GEMARA_VERSION` is ignored.
