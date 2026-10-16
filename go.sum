@@ -98,8 +98,8 @@ github.com/frankban/quicktest v1.14.6 h1:7Xjx+VpznH+oBnejlPUj8oUpdxnVs4f8XU8WnHk
 github.com/frankban/quicktest v1.14.6/go.mod h1:4ptaffx2x8+WTWXmUCuVU6aPUX1/Mz7zb5vbUoiM6w0=
 github.com/fsnotify/fsnotify v1.9.0 h1:2Ml+OJNzbYCTzsxtv8vKSFD9PbJjmhYF14k/jKC7S9k=
 github.com/fsnotify/fsnotify v1.9.0/go.mod h1:8jBTzvmWwFyi3Pb8djgCCO5IBqzKJ/Jwo8TRcHyHii0=
-github.com/gemaraproj/go-gemara v0.5.0 h1:sKDj3R7fX8tdlksShWGCLUl/sLvo+tGh1xAFs1JaoHU=
-github.com/gemaraproj/go-gemara v0.5.0/go.mod h1:knXQmQ4f7vB18eb6TcUCP2A3dqQpn+oZdyz74Qe1+ac=
+github.com/gemaraproj/go-gemara v0.9.2 h1:282xCpJEYzs8ZBqK0JgcR/m1Te5ZQC9a5NS/AuwyYaY=
+github.com/gemaraproj/go-gemara v0.9.2/go.mod h1:NmeBQdlvekEY/bUlcR2rmX84bb7lLOM/X+TZHUXZzFU=
 github.com/gemaraproj/grc-store-clientkit v0.1.1 h1:q15grTze27tMbOlXaT1UAvrAhDbVPir/4C36Sq/zLus=
 github.com/gemaraproj/grc-store-clientkit v0.1.1/go.mod h1:6gJ5iUOGONQ7PNKAhw+gOkkE8qBo0yatuc8uEMorpsk=
 github.com/go-chi/chi/v5 v5.3.0 h1:halUjDxhshgXHMrao5bB8eNBXo/rnzwr8m5m36glehM=

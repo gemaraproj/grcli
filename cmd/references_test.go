@@ -75,14 +75,14 @@ func TestUnpack_References_FromCache(t *testing.T) {
 
 	// Primary: a cache hit whose content declares the import.
 	primary := &bundle.Bundle{
-		Files:    []bundle.File{{Name: "catalog.yaml", Data: []byte(refBearingCatalogYAML)}},
+		Source:   bundle.File{Name: "catalog.yaml", Data: []byte(refBearingCatalogYAML)},
 		Manifest: bundle.Manifest{BundleVersion: "1", GemaraVersion: "0.5.0"},
 	}
 	putBundle(c, host, "myorg", "mycat", "1.0.0", primary, io.Discard)
 
 	// Reference (acme/baseline@2.1.0): also a cache hit — a full bundle.
 	ref := &bundle.Bundle{
-		Files:    []bundle.File{{Name: "baseline.yaml", Data: []byte("id: baseline\n")}},
+		Source:   bundle.File{Name: "baseline.yaml", Data: []byte("id: baseline\n")},
 		Manifest: bundle.Manifest{BundleVersion: "1", GemaraVersion: "0.5.0"},
 		Etag:     "sha256:refetag",
 	}
@@ -141,10 +141,10 @@ func TestUnpack_References_LicenseHealedOnCacheHit(t *testing.T) {
 	t.Cleanup(srv.Close)
 	host := hostOf(srv.URL)
 
-	primary := &bundle.Bundle{Files: []bundle.File{{Name: "catalog.yaml", Data: []byte(refBearingCatalogYAML)}}}
+	primary := &bundle.Bundle{Source: bundle.File{Name: "catalog.yaml", Data: []byte(refBearingCatalogYAML)}}
 	putBundle(c, host, "myorg", "mycat", "1.0.0", primary, io.Discard)
 	// The reference is cached with NO license — the poisoned/outage shape.
-	ref := &bundle.Bundle{Files: []bundle.File{{Name: "baseline.yaml", Data: []byte("id: baseline\n")}}}
+	ref := &bundle.Bundle{Source: bundle.File{Name: "baseline.yaml", Data: []byte("id: baseline\n")}}
 	refEntry, err := entryFromBundle(ref, "", "https://grc.store/acme/baseline")
 	require.NoError(t, err)
 	require.NoError(t, c.Put(host, "acme", "baseline", "2.1.0", refEntry))
@@ -197,9 +197,9 @@ func TestUnpack_References_LicenseHealMemoized(t *testing.T) {
 	t.Cleanup(srv.Close)
 	host := hostOf(srv.URL)
 
-	primary := &bundle.Bundle{Files: []bundle.File{{Name: "catalog.yaml", Data: []byte(refBearingCatalogYAML)}}}
+	primary := &bundle.Bundle{Source: bundle.File{Name: "catalog.yaml", Data: []byte(refBearingCatalogYAML)}}
 	putBundle(c, host, "myorg", "mycat", "1.0.0", primary, io.Discard)
-	ref := &bundle.Bundle{Files: []bundle.File{{Name: "baseline.yaml", Data: []byte("id: baseline\n")}}}
+	ref := &bundle.Bundle{Source: bundle.File{Name: "baseline.yaml", Data: []byte("id: baseline\n")}}
 	refEntry, err := entryFromBundle(ref, "", "https://grc.store/acme/baseline")
 	require.NoError(t, err)
 	require.NoError(t, c.Put(host, "acme", "baseline", "2.1.0", refEntry))
@@ -255,9 +255,9 @@ func TestUnpack_References_OfflineWhenDiscoveryDown(t *testing.T) {
 	t.Cleanup(srv.Close)
 	host := hostOf(srv.URL)
 
-	primary := &bundle.Bundle{Files: []bundle.File{{Name: "catalog.yaml", Data: []byte(refBearingCatalogYAML)}}}
+	primary := &bundle.Bundle{Source: bundle.File{Name: "catalog.yaml", Data: []byte(refBearingCatalogYAML)}}
 	putBundle(c, host, "myorg", "mycat", "1.0.0", primary, io.Discard)
-	ref := &bundle.Bundle{Files: []bundle.File{{Name: "baseline.yaml", Data: []byte("id: baseline\n")}}, Etag: "sha256:ref"}
+	ref := &bundle.Bundle{Source: bundle.File{Name: "baseline.yaml", Data: []byte("id: baseline\n")}, Etag: "sha256:ref"}
 	refEntry, err := entryFromBundle(ref, "", "https://grc.store/acme/baseline")
 	require.NoError(t, err)
 	require.NoError(t, c.Put(host, "acme", "baseline", "2.1.0", refEntry))
@@ -351,7 +351,7 @@ func TestWriteReference_RejectsTraversal(t *testing.T) {
 // warns via noteDroppedReferenceImports rather than dropping them silently.
 func TestEntryFromBundle_DropsImports(t *testing.T) {
 	b := &bundle.Bundle{
-		Files:   []bundle.File{{Name: "controls.yaml", Data: []byte("id: a\n")}},
+		Source:  bundle.File{Name: "controls.yaml", Data: []byte("id: a\n")},
 		Imports: []bundle.File{{Name: "dep.yaml", Data: []byte("id: dep\n")}},
 	}
 	e, err := entryFromBundle(b, "", "")

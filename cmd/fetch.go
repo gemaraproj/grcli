@@ -133,9 +133,15 @@ func cachingEnabled(v *viper.Viper) bool {
 // dormant Imports slot are not cached (neither renderer uses Type, and a bundle
 // carrying Imports is never cached — see putBundle).
 func bundleFromEntry(e *cache.Entry) (*bundle.Bundle, error) {
-	b := &bundle.Bundle{Etag: e.ManifestDigest}
-	for _, f := range e.Files {
-		b.Files = append(b.Files, bundle.File{Name: f.Name, Data: f.Data})
+	// A bundle carries exactly one artifact file. An entry with any other
+	// count was written by an older grcli; returning an error makes the
+	// caller treat it as a miss and re-fetch.
+	if len(e.Files) != 1 {
+		return nil, fmt.Errorf("cached entry holds %d artifact files, want 1", len(e.Files))
+	}
+	b := &bundle.Bundle{
+		Etag:   e.ManifestDigest,
+		Source: bundle.File{Name: e.Files[0].Name, Data: e.Files[0].Data},
 	}
 	if len(e.Manifest) > 0 {
 		if err := json.Unmarshal(e.Manifest, &b.Manifest); err != nil {
@@ -151,7 +157,7 @@ func bundleFromEntry(e *cache.Entry) (*bundle.Bundle, error) {
 // byte-identical output. It does not persist anything.
 func entryFromBundle(b *bundle.Bundle, license, sourceURL string) (cache.Entry, error) {
 	e := cache.Entry{ManifestDigest: b.Etag, License: license, SourceURL: sourceURL}
-	for _, f := range b.Files {
+	for _, f := range artifactFiles(b) {
 		e.Files = append(e.Files, cache.File{Name: f.Name, Data: f.Data})
 	}
 	if !b.Manifest.Empty() {

@@ -3,7 +3,7 @@ module github.com/gemaraproj/grcli
 go 1.26.0
 
 require (
-	github.com/gemaraproj/go-gemara v0.5.0
+	github.com/gemaraproj/go-gemara v0.9.2
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/revanite-io/grc-store-protocol v0.8.0
