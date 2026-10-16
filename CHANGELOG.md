@@ -45,4 +45,5 @@ signed multi-platform OCI artifact at `ghcr.io/gemaraproj/grcli`.
   `--gemara-version` / `GRCLI_GEMARA_VERSION` pins one version for every file;
   `--spec` / `GRCLI_GEMARA_SPEC_DIR` validates against a local checkout
   instead. `metadata.type` and `metadata.gemara-version` must be a plain type
-  name and a plain version; anything else fails before `cue` runs.
+  name and a plain version; anything else fails before `cue` runs. `OK`/`FAIL`
+  lines now include the Gemara version, e.g. `(#Policy, gemara v1.6.0)`.

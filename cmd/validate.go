@@ -189,7 +189,7 @@ func gemaraVersion(override, fromMeta string) (string, error) {
 	case version == latestVersion, majorLatestRe.MatchString(version):
 		return version, nil
 	case !semverRe.MatchString(version):
-		return "", fmt.Errorf("invalid Gemara version %q: want a full version like 1.6.0, or %s", version, latestVersion)
+		return "", fmt.Errorf("invalid Gemara version %q: want a full version like 1.6.0 (quote it in YAML), or %s", version, latestVersion)
 	}
 	return "v" + strings.TrimPrefix(version, "v"), nil
 }
