@@ -36,8 +36,7 @@ contacts:
 
 // The happy-path validate tests need both `cue` on PATH and a local
 // Gemara spec checkout to vet against. CI environments without either
-// skip
-// (GEMARA_SPEC_DIR env or sibling checkout).
+// skip (GEMARA_SPEC_DIR env or sibling checkout).
 //
 // On the dev workstation the spec lives at ../gemara relative to this
 // repo; we also honor GRCLI_GEMARA_SPEC_DIR for explicit overrides.
