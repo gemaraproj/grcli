@@ -36,7 +36,7 @@ contacts:
 
 // The happy-path validate tests need both `cue` on PATH and a local
 // Gemara spec checkout to vet against. CI environments without either
-// skip; this is the same pattern semaphore's drift check uses
+// skip
 // (GEMARA_SPEC_DIR env or sibling checkout).
 //
 // On the dev workstation the spec lives at ../gemara relative to this

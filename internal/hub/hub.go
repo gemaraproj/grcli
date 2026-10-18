@@ -3,7 +3,7 @@
 // Package hub calls the grc.store backend's POST /v1/bundles/sync
 // endpoint so the hub indexes a bundle that grcli has already pushed
 // to the OCI registry. The request body matches the handler's
-// syncRequest struct (internal/server/sync.go in semaphore).
+// syncRequest struct.
 package hub
 
 import (
