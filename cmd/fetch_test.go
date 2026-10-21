@@ -103,6 +103,20 @@ func TestPutBundleSkipsWhenImportsPresent(t *testing.T) {
 	}
 }
 
+func TestPutBundleSkipsWhenSourceUnnamed(t *testing.T) {
+	c := tempCache(t)
+	b := &bundle.Bundle{Source: bundle.File{Data: []byte("id: acme\n")}}
+	var out bytes.Buffer
+	putBundle(c, "hub.grc.store", "acme", "x", "1.0.0", b, &out)
+
+	if _, found, _ := c.Get("hub.grc.store", "acme", "x", "1.0.0"); found {
+		t.Error("bundle with unnamed source should not have been cached (every read would miss)")
+	}
+	if !bytes.Contains(out.Bytes(), []byte("no named source artifact")) {
+		t.Errorf("expected a not-cached notice, got %q", out.String())
+	}
+}
+
 // TestResolveBundle_CacheHitSkipsNetwork proves the core Phase 2 property: a
 // primary-artifact cache hit is served with NO network. The --url points at a
 // non-resolvable host with no server, so if resolveBundle attempted hub

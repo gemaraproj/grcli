@@ -134,8 +134,8 @@ func cachingEnabled(v *viper.Viper) bool {
 // carrying Imports is never cached — see putBundle).
 func bundleFromEntry(e *cache.Entry) (*bundle.Bundle, error) {
 	// A bundle carries exactly one artifact file. An entry with any other
-	// count was written by an older grcli; returning an error makes the
-	// caller treat it as a miss and re-fetch.
+	// count is a legacy multi-file entry or malformed; returning an error
+	// makes the caller treat it as a miss and re-fetch.
 	if len(e.Files) != 1 {
 		return nil, fmt.Errorf("cached entry holds %d artifact files, want 1", len(e.Files))
 	}
@@ -174,8 +174,14 @@ func entryFromBundle(b *bundle.Bundle, license, sourceURL string) (cache.Entry, 
 // failure is non-fatal (the pull already succeeded). A bundle carrying the
 // dormant Imports slot is not cached: the v2 entry format stores Files +
 // manifest only, so caching such a bundle would silently drop the
-// imports on the next hit — better to leave it uncached and re-pull.
+// imports on the next hit — better to leave it uncached and re-pull. A bundle
+// with an unnamed Source is not cached either: it would store zero files, which
+// bundleFromEntry rejects, so every read would miss.
 func putBundle(c *cache.Cache, host, ns, id, version string, b *bundle.Bundle, diag io.Writer) {
+	if b.Source.Name == "" {
+		fmt.Fprintf(diag, "  ! not caching %s/%s@%s: bundle has no named source artifact\n", ns, id, version)
+		return
+	}
 	if len(b.Imports) > 0 {
 		fmt.Fprintf(diag, "  ! not caching %s/%s@%s: bundle carries imports (not stored in cache)\n", ns, id, version)
 		return
