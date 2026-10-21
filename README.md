@@ -159,9 +159,8 @@ signature to check). It then writes the artifact's files **and** its
 `bundle.json` manifest (with provenance) into a directory. `cat` streams the
 **Gemara content only** to
 stdout — no manifest, no files on disk — so it pipes cleanly into `yq` (the
-content is YAML; for `jq`, convert first with `yq -o=json`). A
-single-file bundle prints verbatim; a multi-file bundle prints as a `---`
-separated YAML stream (use `--file <name>` to pick one). With `--with-imports` /
+content is YAML; for `jq`, convert first with `yq -o=json`). The
+bundle's artifact prints verbatim. With `--with-imports` /
 `--with-references`, `unpack` also pulls the artifacts a bundle references into a
 `references/<category>/<ns>/<id>@<version>/` directory tree plus a
 `references/index.json` (`cat` is primary-only).

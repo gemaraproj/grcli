@@ -174,7 +174,7 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 	}
 
 	fmt.Fprintf(out, "unpacked %s:%s → %s (%d files, %d imports)\n",
-		refLabel, version, output, len(unpacked.Files), len(unpacked.Imports))
+		refLabel, version, output, len(artifactFiles(unpacked)), len(unpacked.Imports))
 	if err := writeBundle(unpacked, output, out); err != nil {
 		return err
 	}
@@ -268,7 +268,7 @@ func referenceMode(v *viper.Viper) (refs.Mode, bool) {
 // bundle.json. Filenames are path-cleaned and rejected if they try to
 // escape the output directory.
 func writeBundle(b *bundle.Bundle, dir string, out io.Writer) error {
-	for _, file := range b.Files {
+	for _, file := range artifactFiles(b) {
 		name, err := safeWriteFile(dir, file.Name, file.Data)
 		if err != nil {
 			return err
@@ -349,7 +349,7 @@ func resolveReferences(ctx context.Context, v *viper.Viper, mode refs.Mode, b *b
 
 	// Gather selected references across the primary file(s).
 	var selected []refs.Selected
-	for _, f := range b.Files {
+	for _, f := range artifactFiles(b) {
 		a, err := refs.Scan(f.Data)
 		if err != nil {
 			fmt.Fprintf(out, "  ! could not read references in %s: %v\n", f.Name, err)

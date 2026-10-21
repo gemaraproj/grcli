@@ -164,7 +164,7 @@ func TestConfig_EndToEnd_CacheDisabledSkipsWarmEntry(t *testing.T) {
 	isolatedWorkdir(t) // sets XDG_CONFIG_HOME (after GRCLI_CACHE; both live)
 	writeGlobalConfig(t, "cache-enabled: false\n")
 	const url = "https://hub.invalid.test"
-	seed := &bundle.Bundle{Files: []bundle.File{{Name: "controls.yaml", Data: []byte("id: from-cache\n")}}}
+	seed := &bundle.Bundle{Source: bundle.File{Name: "controls.yaml", Data: []byte("id: from-cache\n")}}
 	putBundle(c, hostOf(url), "acme", "controls", "1.0.0", seed, io.Discard)
 
 	_, err := runRootExpectErr(t, "unpack", "--url", url, "--repository", "acme/controls",

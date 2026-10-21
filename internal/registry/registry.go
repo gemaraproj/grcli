@@ -412,11 +412,11 @@ func pack(ctx context.Context, target oras.Target, tag string, in PackInput) (oc
 
 	b := &bundle.Bundle{
 		Manifest: manifest,
-		Files: []bundle.File{{
+		Source: bundle.File{
 			Name: in.Filename,
 			Type: in.ArtifactType,
 			Data: in.Body,
-		}},
+		},
 	}
 
 	var packOpts []bundle.PackOption
