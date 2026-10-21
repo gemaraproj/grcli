@@ -371,6 +371,10 @@ func isolatedWorkdir(t *testing.T) string {
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("GRCLI_URL", "")
+	// validate reads these; a developer's exported values must not steer tests.
+	t.Setenv("GRCLI_SPEC", "")
+	t.Setenv("GRCLI_GEMARA_SPEC_DIR", "")
+	t.Setenv("GRCLI_GEMARA_VERSION", "")
 	return dir
 }
 
