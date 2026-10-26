@@ -47,6 +47,6 @@ signed multi-platform OCI artifact at `ghcr.io/gemaraproj/grcli`.
   instead. `metadata.type` and `metadata.gemara-version` must be a plain type
   name and a plain version; anything else fails before `cue` runs. `OK`/`FAIL`
   lines now include the Gemara version, e.g. `(#Policy, gemara v1.6.0)`.
-  Each `cue vet` invocation has a 30-second timeout. If both environment
-  settings are set, the local spec wins with a warning on stderr that
-  `GRCLI_GEMARA_VERSION` is ignored.
+  Each `cue vet` invocation has a 30-second timeout. If a local spec comes
+  from the environment or config and a version is also set there, the local
+  spec wins with a warning on stderr that the version is ignored.

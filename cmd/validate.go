@@ -31,8 +31,11 @@ const (
 
 	// latestVersion is cue's query for the newest published version.
 	latestVersion = "latest"
-	vetTimeout    = 30 * time.Second
 )
+
+// vetTimeout bounds each cue invocation, which may fetch from the network.
+// A variable only so tests can shorten it.
+var vetTimeout = 30 * time.Second
 
 func newValidateCmd(v *viper.Viper) *cobra.Command {
 	cmd := &cobra.Command{
@@ -89,7 +92,10 @@ func runValidate(cmd *cobra.Command, v *viper.Viper) error {
 	// A local checkout fixes the version, so asking for both is a mistake.
 	// Only explicit flags conflict: a flag beats the other setting's
 	// environment/config value, and with neither flag the spec dir wins.
-	versionFlagSet := cmd.Flags().Changed(flagGemaraVersion)
+	// A blank --gemara-version (say, from an unset shell variable) counts
+	// as not passed, so it cannot silently bypass the spec dir.
+	versionFlagSet := cmd.Flags().Changed(flagGemaraVersion) &&
+		strings.TrimSpace(v.GetString(flagGemaraVersion)) != ""
 	if versionFlagSet && cmd.Flags().Changed(flagSpec) {
 		return fmt.Errorf("--%s and --%s are mutually exclusive: a local spec checkout fixes the version", flagSpec, flagGemaraVersion)
 	}
@@ -106,8 +112,9 @@ func runValidate(cmd *cobra.Command, v *viper.Viper) error {
 		if _, err := gemaraVersion(versionOverride, ""); err != nil {
 			return fmt.Errorf("--%s: %w", flagGemaraVersion, err)
 		}
-	} else if !cmd.Flags().Changed(flagSpec) && strings.TrimSpace(os.Getenv("GRCLI_GEMARA_VERSION")) != "" {
-		fmt.Fprintf(cmd.ErrOrStderr(), "grcli: warning: ignoring GRCLI_GEMARA_VERSION because a local spec is selected (%s / spec config); the checkout fixes the version\n", envSpecPath)
+	} else if ignored := strings.TrimSpace(v.GetString(flagGemaraVersion)); ignored != "" && !cmd.Flags().Changed(flagSpec) {
+		// The version came from GRCLI_GEMARA_VERSION or the config file.
+		fmt.Fprintf(cmd.ErrOrStderr(), "grcli: warning: ignoring gemara-version %q (GRCLI_GEMARA_VERSION / config) because a local spec is selected (%s / spec config); the checkout fixes the version\n", ignored, envSpecPath)
 	}
 
 	if _, err := exec.LookPath("cue"); err != nil {
@@ -251,10 +258,13 @@ func vetArgs(specDir, version, artifactType, absFile string) []string {
 }
 
 // vetFile invokes 'cue vet' for one file. When specDir is set, cue runs
-// with it as the working directory (see vetArgs); the input file path is
-// resolved to absolute first so the cd doesn't change which file is being
-// vetted. Any output from cue is forwarded to out so users see schema
-// violations inline.
+// with it as the working directory (see vetArgs). Otherwise cue runs from a
+// fresh empty directory: cue looks upward from its cwd for a cue.mod, and
+// one in the caller's project (e.g. a legacy module.cue with no language
+// version) would otherwise fail every file. The input file path is resolved
+// to absolute first so the cd doesn't change which file is being vetted.
+// Any output from cue is forwarded to out so users see schema violations
+// inline.
 func vetFile(ctx context.Context, specDir, version, artifactType, file string, out io.Writer) error {
 	ctx, cancel := context.WithTimeout(ctx, vetTimeout)
 	defer cancel()
@@ -263,8 +273,16 @@ func vetFile(ctx context.Context, specDir, version, artifactType, file string, o
 	if err != nil {
 		return fmt.Errorf("resolving file path: %w", err)
 	}
+	workDir := specDir
+	if workDir == "" {
+		workDir, err = os.MkdirTemp("", "grcli-validate-")
+		if err != nil {
+			return fmt.Errorf("creating cue working directory: %w", err)
+		}
+		defer func() { _ = os.RemoveAll(workDir) }()
+	}
 	cmd := exec.CommandContext(ctx, "cue", vetArgs(specDir, version, artifactType, absFile)...)
-	cmd.Dir = specDir
+	cmd.Dir = workDir
 	cmd.Stdout = out
 	cmd.Stderr = out
 	if err := cmd.Run(); err != nil {

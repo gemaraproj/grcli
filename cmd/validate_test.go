@@ -233,15 +233,19 @@ func TestVetFile_Deadline(t *testing.T) {
 	require.NoError(t, os.Chmod(cue, 0o700))
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	t.Run("default-timeout", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	t.Run("own-timeout", func(t *testing.T) {
+		orig := vetTimeout
+		vetTimeout = 200 * time.Millisecond
+		t.Cleanup(func() { vetTimeout = orig })
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		start := time.Now()
 		err := vetFile(ctx, "", "v1.6.0", "Policy", "policy.yaml", io.Discard)
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 		elapsed := time.Since(start)
-		require.GreaterOrEqual(t, elapsed, 25*time.Second, "cue must have time to resolve and validate")
-		require.Less(t, elapsed, 35*time.Second, "cue must stop before the caller's deadline")
+		require.GreaterOrEqual(t, elapsed, vetTimeout, "cue must get the full timeout")
+		require.Less(t, elapsed, 5*time.Second, "vetFile must stop at its own timeout, not the caller's")
 	})
 	t.Run("earlier-parent-deadline", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -267,6 +271,22 @@ func TestValidate_Registry_HappyPath(t *testing.T) {
 	entries, err := os.ReadDir(workdir)
 	require.NoError(t, err)
 	require.Len(t, entries, 1, "validate must not write the spec into the workspace")
+}
+
+// cue looks upward from its working directory for a cue.mod. In registry
+// mode that must not be the caller's cwd: a legacy module there (no
+// language version) would fail every file.
+func TestValidate_Registry_IgnoresCueModInWorkdir(t *testing.T) {
+	requireRegistry(t)
+
+	workdir := isolatedWorkdir(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(workdir, "cue.mod"), 0o755))
+	writeTempFile(t, filepath.Join(workdir, "cue.mod"), "module.cue", "module: \"example.com/legacy\"\n")
+	input := writeTempFile(t, workdir, "policy.yaml", minimalValidPolicy)
+
+	out := runRoot(t, "validate", "-f", input)
+	require.Contains(t, out, "OK")
+	require.Contains(t, out, "gemara v0.20.0")
 }
 
 func TestValidate_Registry_DetectsSchemaViolation(t *testing.T) {
@@ -331,15 +351,31 @@ func TestValidate_LocalSpec_IgnoresVersionEnv(t *testing.T) {
 	require.NotContains(t, out, "gemara v")
 }
 
+// An empty --gemara-version (e.g. an unset shell variable) is treated as
+// unset, so a spec dir from the environment stays in effect.
+func TestValidate_EmptyVersionFlagKeepsSpecEnv(t *testing.T) {
+	requireCue(t)
+
+	workdir := isolatedWorkdir(t)
+	t.Setenv(envSpecPath, writeLocalSpec(t))
+	input := writeTempFile(t, workdir, "policy.yaml", minimalValidPolicy)
+
+	out := runRoot(t, "validate", "-f", input, "--gemara-version", "")
+	require.Contains(t, out, "OK")
+	require.NotContains(t, out, "gemara v", "the local spec must be used, not the registry")
+}
+
 func TestValidate_LocalSpec_VersionWarning(t *testing.T) {
 	requireCue(t)
 	for _, tc := range []struct {
-		name     string
-		version  string
-		specFlag bool
-		wantWarn bool
+		name          string
+		version       string
+		configVersion string
+		specFlag      bool
+		wantWarn      bool
 	}{
 		{name: "both-env", version: "1.6.0", wantWarn: true},
+		{name: "version-from-config", configVersion: "1.6.0", wantWarn: true},
 		{name: "explicit-spec", version: "1.6.0", specFlag: true},
 		{name: "empty-version"},
 	} {
@@ -348,6 +384,9 @@ func TestValidate_LocalSpec_VersionWarning(t *testing.T) {
 			specDir := writeLocalSpec(t)
 			t.Setenv(envSpecPath, specDir)
 			t.Setenv("GRCLI_GEMARA_VERSION", tc.version)
+			if tc.configVersion != "" {
+				writeGlobalConfig(t, "gemara-version: "+strconv.Quote(tc.configVersion)+"\n")
+			}
 			input := writeTempFile(t, workdir, "policy.yaml", minimalValidPolicy)
 			args := []string{"validate", "-f", input}
 			if tc.specFlag {
@@ -358,7 +397,7 @@ func TestValidate_LocalSpec_VersionWarning(t *testing.T) {
 			require.Contains(t, stdout, "OK")
 			require.NotContains(t, stdout, "warning:")
 			if tc.wantWarn {
-				require.Contains(t, stderr, "ignoring GRCLI_GEMARA_VERSION")
+				require.Contains(t, stderr, `ignoring gemara-version "1.6.0"`)
 				require.Contains(t, stderr, envSpecPath)
 			} else {
 				require.Empty(t, stderr)
