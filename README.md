@@ -48,9 +48,11 @@ Some commands shell out to external tools:
   all keyless `verify`/`unpack` need no external tools** — grcli signs
   and verifies in-process against Sigstore, so the common path is just
   the `grcli` binary. https://docs.sigstore.dev/cosign/installation/
-- **`cue`** on `PATH` — `validate`. https://cuelang.org
-- **A Gemara spec checkout** — `validate`.
-  `git clone https://github.com/gemaraproj/gemara`
+- **`cue`** on `PATH` — `validate`. https://cuelang.org. The Gemara schemas
+  are fetched from the CUE central registry
+  (`github.com/gemaraproj/gemara`) into cue's own cache, so no spec checkout
+  is needed. `--spec <dir>` validates against a local checkout instead
+  (offline, or to try unreleased schema changes).
 - **A grc.store account** — `publish`. Run `grcli login` (OIDC device
   flow), or use trusted publishing in CI (see below).
 
@@ -84,8 +86,9 @@ Run `grcli <command> --help` for the full flag list. The typical flow is
 # Sign in (defaults to https://hub.grc.store)
 grcli login
 
-# Validate against a spec checkout matching your metadata.gemara-version
-grcli validate -f controls.yaml --spec /path/to/gemara
+# Validate against the published spec version named by the file's
+# metadata.gemara-version (override with --gemara-version 1.6.0 | latest)
+grcli validate -f controls.yaml
 
 # Publish — picks up the stored login token; signs by default.
 # --license is REQUIRED and takes an SPDX expression; publish

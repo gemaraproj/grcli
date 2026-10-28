@@ -23,8 +23,9 @@ make ci-local   # fmtcheck + vet + lint + tidycheck + testcov — what CI runs
 ```
 
 `make lint` needs [golangci-lint](https://golangci-lint.run/) at the version
-pinned in `.github/workflows/ci.yml`. `grcli validate` needs `cue` on `PATH`;
-key-based signing (`--cosign-key`) needs `cosign` ≥ 2.6.0. Keyless signing and
+pinned in `.github/workflows/ci.yml`. `grcli validate` needs `cue` on `PATH`
+(its tests skip locally without it or without network access to the CUE
+registry, and fail in CI); key-based signing (`--cosign-key`) needs `cosign` ≥ 2.6.0. Keyless signing and
 all verification are in-process and need neither.
 
 ## Pull requests
