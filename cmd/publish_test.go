@@ -90,6 +90,7 @@ func TestResolveTarget(t *testing.T) {
 				repository:   "my-team/my-policy",
 				tag:          "1.2.3",
 				dryRun:       true,
+				pushRepo:     "staging/my-team/my-policy",
 				output:       "/tmp/out",
 			},
 		},

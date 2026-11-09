@@ -295,12 +295,9 @@ func resolveTarget(ctx context.Context, v *viper.Viper, loaded *source.Loaded) (
 	// Every publish goes to the staging form of the served repository and
 	// the sync names the served one; there is no fallback to pushing the
 	// served repository.
-	var pushRepo string
-	if !dryRun {
-		var ok bool
-		if pushRepo, ok = staging.Repository(repository); !ok {
-			return publishTarget{}, fmt.Errorf("repository %q must be <namespace>/<name> with no empty segment, and %q is not a namespace you can publish to", repository, staging.Segment)
-		}
+	pushRepo, ok := staging.Repository(repository)
+	if !ok {
+		return publishTarget{}, fmt.Errorf("repository %q must be <namespace>/<name> with no empty segment, and %q is not a namespace you can publish to", repository, staging.Segment)
 	}
 
 	target := publishTarget{

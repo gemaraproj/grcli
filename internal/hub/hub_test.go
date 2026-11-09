@@ -249,7 +249,7 @@ func TestSync_Refusal(t *testing.T) {
 // TestNew_TimeoutAboveSyncDeadline holds the client timeout above the hub's
 // 120-second catalog sync write deadline.
 func TestNew_TimeoutAboveSyncDeadline(t *testing.T) {
-	if got := New("http://hub", "").HTTP.Timeout; got != 3*time.Minute {
-		t.Errorf("timeout = %s, want 3m", got)
+	if got := New("http://hub", "").HTTP.Timeout; got <= 120*time.Second {
+		t.Errorf("timeout = %s, want above the hub's 120s sync deadline", got)
 	}
 }
