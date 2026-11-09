@@ -15,6 +15,12 @@
 # Trusted CI publisher for the target namespace. Without that binding the hub
 # returns 403; adding a GitHub secret will not fix it.
 #
+# Staging: grcli pushes each bundle to staging/<namespace>/<name>
+# and the hub copies it into <namespace>/<name> when the sync accepts it. A
+# grcli-version from before the staging cutover gets 401 UNAUTHORIZED at its
+# first blob push against a cut-over hub; set grcli-version to a release that
+# pushes to staging.
+#
 # --- Call it from a catalog repo ---
 #   name: Publish catalog
 #   on:

@@ -3,6 +3,22 @@
 Notable changes to `grcli`. This project is pre-1.0; while on `v0.x`, a breaking
 change bumps the minor version.
 
+## Unreleased
+
+### Changed
+
+- **Breaking:** `publish` pushes every bundle and its signature to the staging
+  repository `staging/<namespace>/<name>` and then syncs `<namespace>/<name>`
+  (the `staging` package of grc-store-protocol v0.28.1 names the repository). There is no fallback to pushing
+  the served repository, so this release cannot publish to a hub from before
+  the staging cutover, and older releases cannot publish to a hub after it
+  (their first blob push gets `401 UNAUTHORIZED`).
+- The hub client's timeout rises from 60 seconds to 3 minutes, above the
+  hub's 120-second catalog sync deadline.
+- A refused push names the staging repository and the namespace you need to
+  own, and a refused sync shows the hub's error code and says whether to
+  publish again.
+
 ## [0.1.0] - Unreleased
 
 First release of `grcli` under `github.com/gemaraproj/grcli`, published as a

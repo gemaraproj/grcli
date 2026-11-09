@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -16,7 +17,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"oras.land/oras-go/v2/registry/remote/errcode"
+
 	"github.com/revanite-io/grc-store-protocol/spdx"
+	"github.com/revanite-io/grc-store-protocol/staging"
 
 	"github.com/gemaraproj/grc-store-clientkit/auth"
 	"github.com/gemaraproj/grcli/internal/digest"
@@ -49,9 +53,10 @@ func newPublishCmd(v *viper.Viper) *cobra.Command {
 		Use:   "publish [file...]",
 		Short: "Bundle one Gemara artifact with provenance and push it to grc.store",
 		Long: `Loads the file(s) describing a single artifact, attaches a SLSA-shaped
-provenance record, packs an OCI bundle, pushes it to the configured
-registry, optionally signs with cosign, and notifies the hub via
-POST /v1/bundles/sync.
+provenance record, packs an OCI bundle, pushes it to the staging
+repository staging/<namespace>/<name> on the hub's registry, optionally
+signs it, and asks the hub to check it and publish it to
+<namespace>/<name> via POST /v1/bundles/sync.
 
 Files can be supplied as positional arguments (grcli publish a.yaml
 b.yaml) or via -f / --file. The two forms are mutually exclusive —
@@ -106,7 +111,8 @@ need to set a secret.`,
 // and artifact metadata defaults are merged.
 type publishTarget struct {
 	registryHost string
-	repository   string
+	repository   string // the served repository: provenance, version check, sync
+	pushRepo     string // staging.Repository(repository): where the bytes go
 	tag          string
 	dryRun       bool
 	output       string
@@ -175,7 +181,7 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 		// The registry rejects unauthenticated writes. Mint a repo-scoped
 		// push token from the hub and export it so both the oras push and
 		// the cosign signature push authenticate.
-		if err := authenticatePush(ctx, v, target.repository); err != nil {
+		if err := authenticatePush(ctx, v, target.pushRepo); err != nil {
 			return err
 		}
 	}
@@ -212,7 +218,8 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 	}
 
 	return signAndNotify(ctx, v, signContext{
-		repository:     target.repository,
+		repository:     target.pushRepo,
+		served:         target.repository,
 		tag:            target.tag,
 		reference:      result.Reference,
 		registryHost:   target.registryHost,
@@ -223,7 +230,8 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 
 // signContext carries the push coordinates the sign + notify step needs.
 type signContext struct {
-	repository     string
+	repository     string // the staging repository the bundle and signature go to
+	served         string // the served repository the sync names
 	tag            string
 	reference      string // <registry>/<repository>:<tag>, bare host
 	registryHost   string // scheme-prefixed oras dial target
@@ -284,9 +292,21 @@ func resolveTarget(ctx context.Context, v *viper.Viper, loaded *source.Loaded) (
 		registryHost = d.RegistryURL
 	}
 
+	// Every publish goes to the staging form of the served repository and
+	// the sync names the served one; there is no fallback to pushing the
+	// served repository.
+	var pushRepo string
+	if !dryRun {
+		var ok bool
+		if pushRepo, ok = staging.Repository(repository); !ok {
+			return publishTarget{}, fmt.Errorf("repository %q must be <namespace>/<name> with no empty segment, and %q is not a namespace you can publish to", repository, staging.Segment)
+		}
+	}
+
 	target := publishTarget{
 		registryHost: registryHost,
 		repository:   repository,
+		pushRepo:     pushRepo,
 		tag:          tag,
 		dryRun:       dryRun,
 		output:       v.GetString(flagOutput),
@@ -311,12 +331,27 @@ func pushBundle(ctx context.Context, target publishTarget, in registry.PackInput
 			result.Reference, result.ManifestDigest, result.BodyDigest, artifactType, artifactID)
 		return result, nil
 	}
-	result, err := registry.PushRemote(ctx, target.registryHost, target.repository, target.tag, in)
+	result, err := registry.PushRemote(ctx, target.registryHost, target.pushRepo, target.tag, in)
 	if err != nil {
-		return nil, fmt.Errorf("push: %w", err)
+		return nil, pushError(target, err)
 	}
 	fmt.Fprintf(out, "pushed %s\n  manifest digest: %s\n", result.Reference, result.ManifestDigest)
 	return result, nil
+}
+
+// pushError explains a registry refusal. The registry token grants push on
+// a staging repository only to the namespace's owner, and only on a hub past
+// the staging cutover; anything else gets pull only and zot answers the
+// first blob push with 401.
+func pushError(target publishTarget, err error) error {
+	var resp *errcode.ErrorResponse
+	if errors.As(err, &resp) && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+		ns, _, _ := strings.Cut(target.repository, "/")
+		return fmt.Errorf("push: the registry refused the push to staging repository %s (%d): "+
+			"you need to own namespace %q (or be its trusted CI publisher), and the hub must run the staging cutover; "+
+			"a hub that predates it does not accept staging pushes: %w", target.pushRepo, resp.StatusCode, ns, err)
+	}
+	return fmt.Errorf("push to %s: %w", target.pushRepo, err)
 }
 
 // signAndNotify runs the optional cosign step and the hub sync call.
@@ -352,7 +387,7 @@ func signAndNotify(ctx context.Context, v *viper.Viper, sc signContext) error {
 	if err != nil {
 		return err
 	}
-	syncResp, err := hub.New(hubURL, token).Sync(ctx, sc.repository, sc.tag)
+	syncResp, err := hub.New(hubURL, token).Sync(ctx, sc.served, sc.tag)
 	if err != nil {
 		return fmt.Errorf("hub sync: %w", err)
 	}

@@ -135,6 +135,18 @@ single `-`, trims leading/trailing `-`, `_`, and `.`, and lowercases the
 result. So a bundle with `author.id: TAG-SC` and `id: cnsc` publishes to
 `tag-sc/cnsc` — regardless of which namespace you are a member of.
 
+**The bytes go to staging first.** `publish` always pushes the bundle and its
+signature to the staging repository `staging/<namespace>/<name>`, then calls
+`POST /v1/bundles/sync` naming `<namespace>/<name>`. The hub checks the staged
+bundle and copies an accepted one into `<namespace>/<name>`; nobody pushes a
+served repository directly. The hub deletes the staged upload
+once it decides, and staging removes anything left there after about 24 hours,
+so a failed publish is fixed by running `grcli publish` again. There is no
+fallback: a hub from before the staging cutover gives no push grant on
+`staging/...`, and the push fails with `401` naming the staging repository.
+Older grcli releases push the served repository directly, which a cut-over hub
+refuses with a `401 UNAUTHORIZED` at the first blob push; upgrade grcli.
+
 **This is the usual cause of a 403 on publish.** Authorization is per
 *namespace* (the part before the `/`), so you must own — or hold a trusted
 publisher binding for — the namespace the metadata names, not the one you
