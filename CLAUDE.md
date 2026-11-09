@@ -32,7 +32,8 @@ a user command.)
 `hub` (`/v1/bundles/sync`, `/v2/token`, discovery) · `registry` (OCI packing via `oras-go`) ·
 `sign` (cosign shell-out, Sigstore bundle) · `provenance` (SLSA v1.0 predicate) · `source` (load/merge/verify YAML) · `refs` ·
 `digest` (SHA256) · `cache` (immutable-tag disk cache — v2 stores the whole bundle: files +
-`bundle.json`). Imports `grc-store-protocol` (discovery, syncapi, registrytoken, spdx).
+`bundle.json`). Imports `grc-store-protocol` (discovery, syncapi, registrytoken, spdx, staging, apierror).
+`publish` pushes to `staging.Repository(<ns>/<name>)` and syncs the served name, with no fallback.
 **Auth is no longer here**: `internal/auth` (device flow, credential store, token resolution, GHA
 OIDC) was deleted in favour of `github.com/gemaraproj/grc-store-clientkit/auth`, shared with
 privateer-sdk. `cmd.grcliApp` (`cmd/root.go`) is the per-tool identity that keeps grcli's own

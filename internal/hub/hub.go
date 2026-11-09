@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/revanite-io/grc-store-protocol/apierror"
+	"github.com/revanite-io/grc-store-protocol/staging"
 	"github.com/revanite-io/grc-store-protocol/syncapi"
 )
 
@@ -35,12 +37,17 @@ type Client struct {
 	HTTP    *http.Client
 }
 
+// requestTimeout bounds every hub call. It sits above catalog sync's
+// 120-second write deadline on the hub, so a slow sync ends with the hub's
+// answer rather than a client timeout.
+const requestTimeout = 3 * time.Minute
+
 // New returns a Client with sensible defaults.
 func New(baseURL, token string) *Client {
 	return &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		Token:   token,
-		HTTP:    &http.Client{Timeout: 60 * time.Second},
+		HTTP:    &http.Client{Timeout: requestTimeout},
 	}
 }
 
@@ -300,15 +307,60 @@ func (c *Client) Sync(ctx context.Context, repository, tag string) (*SyncRespons
 		return nil, fmt.Errorf("reading sync response from %s: %w", url, err)
 	}
 	if resp.StatusCode/100 != 2 {
-		// Same shape as VersionExists/GetCatalog default branches (URL +
-		// status + body snippet) so an operator chasing a 5xx on any hub
-		// endpoint sees the same diagnostic surface.
-		return nil, fmt.Errorf("hub sync %s returned %d: %s",
-			url, resp.StatusCode, strings.TrimSpace(string(rb)))
+		return nil, newSyncError(url, repository, tag, resp.StatusCode, rb)
 	}
 	out := &SyncResponse{}
 	if err := json.Unmarshal(rb, out); err != nil {
 		return nil, fmt.Errorf("decoding hub response: %w", err)
 	}
 	return out, nil
+}
+
+// SyncError is a refused POST /v1/bundles/sync. Code and Detail come from
+// the hub's apierror envelope; Code is empty when the body was not one.
+type SyncError struct {
+	URL             string // the sync endpoint, for an operator chasing a 5xx
+	Repository, Tag string
+	Status          int
+	Code, Detail    string
+}
+
+func newSyncError(url, repository, tag string, status int, body []byte) *SyncError {
+	e := &SyncError{URL: url, Repository: repository, Tag: tag, Status: status}
+	var env apierror.Envelope
+	if json.Unmarshal(body, &env) == nil && env.Error != "" {
+		e.Code, e.Detail = env.Error, env.Detail
+	} else {
+		e.Detail = strings.TrimSpace(string(body))
+	}
+	return e
+}
+
+func (e *SyncError) Error() string {
+	what := fmt.Sprintf("%s refused %s:%s (%d", e.URL, e.Repository, e.Tag, e.Status)
+	if e.Code != "" {
+		what += " " + e.Code
+	}
+	what += ")"
+	if e.Detail != "" {
+		what += ": " + e.Detail
+	}
+	return what + ". " + e.hint()
+}
+
+// hint says what to do next. The hub deletes the staged upload on success
+// and on every 4xx but a 429, and keeps it on a 429 or 5xx, so a refusal
+// means publishing again, not syncing again.
+func (e *SyncError) hint() string {
+	stagingRepo, _ := staging.Repository(e.Repository)
+	switch {
+	case e.Status == http.StatusUnauthorized:
+		return "Your hub login is missing or expired: run grcli login (in CI, check the job has id-token: write)."
+	case e.Code == "fetch_failed":
+		return fmt.Sprintf("The hub could not read the bundle from %s: the push did not finish, or it was pushed more than 24 hours ago and staging removed it. Run grcli publish again.", stagingRepo)
+	case e.Status == http.StatusTooManyRequests || e.Status >= 500:
+		return "Nothing was published; run grcli publish again in a moment."
+	default:
+		return "Nothing was published and the hub discarded the staged upload; fix the cause and run grcli publish again."
+	}
 }
