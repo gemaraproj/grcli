@@ -164,7 +164,7 @@ func (a *Artifact) Select(mode Mode) []Selected {
 //   - any other host is not resolvable here.
 //
 // The path is read by the shared grc-store-protocol/refurl rule — the same
-// one the hub index (ADR-0040) and the web UI follow — so a reference grcli
+// one the hub index and the web UI follow — so a reference grcli
 // pulls is exactly one the hub indexed, slugified segments included.
 //
 // ok=false carries a human reason for the skip report; it is never an error —

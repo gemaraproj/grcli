@@ -5,14 +5,18 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/gemaraproj/grc-store-clientkit/auth"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
+	"oras.land/oras-go/v2/registry/remote/errcode"
 
 	"github.com/gemaraproj/grcli/internal/registry"
 	"github.com/gemaraproj/grcli/internal/source"
@@ -54,6 +58,7 @@ func TestResolveTarget(t *testing.T) {
 			wantTarget: publishTarget{
 				registryHost: "registry.example",
 				repository:   "my-team/my-policy",
+				pushRepo:     "staging/my-team/my-policy",
 				tag:          "1.2.3",
 				output:       "grcli-out",
 			},
@@ -68,6 +73,7 @@ func TestResolveTarget(t *testing.T) {
 			wantTarget: publishTarget{
 				registryHost: "registry.example",
 				repository:   "custom/repo",
+				pushRepo:     "staging/custom/repo",
 				tag:          "1.2.3",
 				output:       "grcli-out",
 			},
@@ -84,8 +90,22 @@ func TestResolveTarget(t *testing.T) {
 				repository:   "my-team/my-policy",
 				tag:          "1.2.3",
 				dryRun:       true,
+				pushRepo:     "staging/my-team/my-policy",
 				output:       "/tmp/out",
 			},
+		},
+		{
+			// A staging name is not a served repository: name the served one.
+			name:       "repository-in-staging-refused",
+			flags:      map[string]any{flagURL: srv.URL, flagRepository: "staging/my-team/my-policy"},
+			loaded:     loadedFull,
+			wantErrSub: "is not a namespace you can publish to",
+		},
+		{
+			name:       "single-segment-repository-refused",
+			flags:      map[string]any{flagURL: srv.URL, flagRepository: "solo"},
+			loaded:     loadedFull,
+			wantErrSub: `repository "solo" must be <namespace>/<name>`,
 		},
 		{
 			name:       "missing-url-when-not-dry-run",
@@ -303,4 +323,21 @@ func TestApplyVersionFlag(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPushError checks that a registry 401/403 on the staging push names the
+// staging repository, the namespace and the cutover, and that other errors
+// still name where the push went.
+func TestPushError(t *testing.T) {
+	target := publishTarget{repository: "acme/ctl", pushRepo: "staging/acme/ctl"}
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		err := pushError(target, fmt.Errorf("packing bundle: %w", &errcode.ErrorResponse{Method: http.MethodPost, StatusCode: status}))
+		for _, want := range []string{"staging/acme/ctl", `"acme"`, "staging cutover", strconv.Itoa(status)} {
+			require.Contains(t, err.Error(), want)
+		}
+		var resp *errcode.ErrorResponse
+		require.ErrorAs(t, err, &resp, "the registry error stays wrapped")
+	}
+	err := pushError(target, errors.New("connection refused"))
+	require.Equal(t, "push to staging/acme/ctl: connection refused", err.Error())
 }

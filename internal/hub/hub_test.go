@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestVersionExists_StatusMapping covers the typed status returns —
@@ -203,5 +204,52 @@ func TestReleaseFor_License(t *testing.T) {
 	}
 	if cat.ReleaseFor("3.0.0") != nil {
 		t.Error("ReleaseFor(3.0.0) should be nil")
+	}
+}
+
+// TestSync_Refusal checks that a refusal reads the hub's apierror envelope
+// and says whether to publish again, naming the staging repository when the
+// hub could not read the staged bundle.
+func TestSync_Refusal(t *testing.T) {
+	cases := []struct {
+		status int
+		body   string
+		want   []string
+	}{
+		{http.StatusBadRequest, `{"error":"fetch_failed","detail":"manifest unknown"}`,
+			[]string{"(400 fetch_failed): manifest unknown", "staging/a/b", "24 hours", "grcli publish again"}},
+		{http.StatusUnprocessableEntity, `{"error":"gemara_version_unsupported","detail":"declare 1.5.0 or later"}`,
+			[]string{"(422 gemara_version_unsupported): declare 1.5.0 or later", "discarded the staged upload"}},
+		{http.StatusForbidden, `{"error":"forbidden","detail":"bundle sync requires ownership of namespace \"a\""}`,
+			[]string{"(403 forbidden)", "ownership of namespace"}},
+		{http.StatusUnauthorized, `{"error":"unauthorized","detail":"token expired"}`,
+			[]string{"grcli login"}},
+		{http.StatusServiceUnavailable, `{"error":"schema_check_unavailable","detail":"busy"}`,
+			[]string{"(503 schema_check_unavailable)", "in a moment"}},
+	}
+	for _, tc := range cases {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(tc.status)
+			_, _ = w.Write([]byte(tc.body))
+		}))
+		_, err := New(srv.URL, "test-token").Sync(context.Background(), "a/b", "1.0.0")
+		srv.Close()
+		var se *SyncError
+		if !errors.As(err, &se) {
+			t.Fatalf("%d: want *SyncError, got %v", tc.status, err)
+		}
+		for _, want := range tc.want {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%d: error %q must contain %q", tc.status, err, want)
+			}
+		}
+	}
+}
+
+// TestNew_TimeoutAboveSyncDeadline holds the client timeout above the hub's
+// 120-second catalog sync write deadline.
+func TestNew_TimeoutAboveSyncDeadline(t *testing.T) {
+	if got := New("http://hub", "").HTTP.Timeout; got <= 120*time.Second {
+		t.Errorf("timeout = %s, want above the hub's 120s sync deadline", got)
 	}
 }
