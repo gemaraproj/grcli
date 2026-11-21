@@ -5,13 +5,12 @@ the docs and the behaviour disagree, code nothing uses, and behaviour that
 is easy to trip over. Found while writing these docs from the code on
 `main`. Each item says where to look.
 
-## Behaviour that contradicts the README or help text
+## Behaviour that is easy to trip over
 
 ### Local publishing cannot succeed against grc.store
 
-The README shows `grcli publish … --cosign-key cosign.key` for local use and
-`--no-sign` for an unsigned publish. Both push to staging and then fail at
-sync: the grc.store hub accepts only keyless (certificate) signatures and
+`grcli publish --cosign-key <key>` (key-signed) and `--no-sign` (unsigned)
+both push to staging and then fail at sync: the grc.store hub accepts only keyless (certificate) signatures and
 refuses unsigned catalogs (`catalog_verification_failed`,
 `catalog_unsigned`). The only publish path that reaches a grc.store hub is
 keyless in GitHub Actions. `grcli login` is consequently useful today only
@@ -23,9 +22,9 @@ for minting a push token that leads to a refused sync.
 (CHANGELOG "Unreleased"). That commit is tagged `v0.3.0-rc.1`, but no image
 was published for it: `ghcr.io/gemaraproj/grcli` holds only `v0.1.0`,
 `v0.2.0` and `latest`, and both releases push to the served repository,
-which a cut-over hub refuses with `401`. `v0.1.0` is also the pin in the
-README's install example, `examples/github-actions/publish.yml`, and the
-reusable workflow's `grcli-version` default.
+which a cut-over hub refuses with `401`. `v0.1.0` is also the pin in
+`examples/github-actions/publish.yml` and the reusable workflow's
+`grcli-version` default, and the README's install examples pull `latest`.
 
 The CHANGELOG heads `v0.1.0` as "Unreleased" and has no `v0.2.0` entry.
 
@@ -37,20 +36,21 @@ first deleting the old tag.
 
 ### `certificate-oidc-issuer` in config breaks zero-flag verify and unpack
 
-The README says to set `certificate-oidc-issuer` in the config file for
-GitHub Enterprise or another CI provider. If you do, every `grcli verify`
+Setting `certificate-oidc-issuer` in the config file (or
+`GRCLI_CERTIFICATE_OIDC_ISSUER`), for GitHub Enterprise or another CI
+provider, breaks the zero-flag modes: every `grcli verify`
 and every `grcli unpack` without `--certificate-identity` fails with
 `--certificate-oidc-issuer requires --certificate-identity`, because the
 mode check cannot tell a config value from a flag (`cmd/verify.go`,
 `resolveVerifyPolicy`). `unpack` downloads and caches the bundle before it
 fails.
 
-### `--repository` no longer splits the index from the registry
+### `--repository` cannot change the coordinate
 
-The README warns that a mismatched `--repository` "appears to succeed" and
-then fails with a digest conflict. Since the hub began authorizing the
-derived namespace, it refuses the sync with
-`422 catalog_coordinate_mismatch` instead.
+A `--repository` that differs from the coordinate derived from the file
+pushes to staging and is then refused at sync with
+`422 catalog_coordinate_mismatch`, because the hub authorizes the namespace
+it derives from the body.
 
 ### `--cosign-key` is silently ignored in GitHub Actions
 
@@ -70,8 +70,6 @@ derived namespace, it refuses the sync with
   value name.
 - `cat --help` shows an example picking "one file out of several" with
   `--file`; a bundle now holds exactly one artifact file.
-- `CLAUDE.md` describes `internal/sign` as a "cosign shell-out" and lists
-  only some of the `grc-store-protocol` packages grcli imports.
 
 ## Reads are always anonymous
 

@@ -31,8 +31,10 @@ In GitHub Actions:
     sudo install grcli /usr/local/bin/grcli
 ```
 
-Pin a release tag (`:v0.1.0`) instead of `latest` for reproducible
-installs. To verify the signature before installing:
+Pin a release tag (`:<release>`) instead of `latest` for reproducible
+installs. To publish to a hub past the staging cutover, `<release>` must be a
+grcli release that pushes to staging; no published image does yet (see
+[known gaps](docs/explanation/known-gaps.md#no-release-carries-the-staging-change)). To verify the signature before installing:
 
 ```sh
 cosign verify ghcr.io/gemaraproj/grcli:latest \
@@ -150,7 +152,10 @@ so a failed publish is fixed by running `grcli publish` again. There is no
 fallback: a hub from before the staging cutover gives no push grant on
 `staging/...`, and the push fails with `401` naming the staging repository.
 Older grcli releases push the served repository directly, which a cut-over hub
-refuses with a `401 UNAUTHORIZED` at the first blob push; upgrade grcli.
+refuses with a `401 UNAUTHORIZED` at the first blob push. No published image
+pushes to staging yet, including `latest`, so the CI example below fails
+against a cut-over hub until one is released (see
+[known gaps](docs/explanation/known-gaps.md#no-release-carries-the-staging-change)).
 
 **This is the usual cause of a 403 on publish.** Authorization is per
 *namespace* (the part before the `/`), so you must own — or hold a trusted
@@ -303,7 +308,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # v2: https://github.com/oras-project/setup-oras/releases/tag/v2.0.0
       - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
       - run: |
