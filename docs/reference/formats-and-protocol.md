@@ -1,7 +1,7 @@
 # Formats and protocol reference
 
 What grcli sends, receives, writes and reads. Shared wire types come from
-[`grc-store-protocol`](https://github.com/revanite-io/grc-store-protocol)
+`grc-store-protocol`
 (v0.28.1); the bundle format comes from
 [`go-gemara`](https://github.com/gemaraproj/go-gemara) (v0.9.2).
 

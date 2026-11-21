@@ -37,13 +37,13 @@ inside this module import them.
 | Dependency | What grcli takes from it | Scope |
 |---|---|---|
 | [go-gemara](https://github.com/gemaraproj/go-gemara) | The bundle format (`bundle.Pack`/`Unpack`), Gemara types for reference parsing, multi-file catalog merging. | General |
-| [grc-store-protocol](https://github.com/revanite-io/grc-store-protocol) | Every type that crosses the wire to the hub: discovery document, `/v2/token` response, sync request and response, error envelope and codes, staging repository naming, canonical signer identity, reference URL parsing, SPDX parsing, media types, size limits. It holds contract only: nouns and rules, no client code. | Hub protocol |
+| `grc-store-protocol` | Every type that crosses the wire to the hub: discovery document, `/v2/token` response, sync request and response, error envelope and codes, staging repository naming, canonical signer identity, reference URL parsing, SPDX parsing, media types, size limits. It holds contract only: nouns and rules, no client code. | Hub protocol |
 | [grc-store-clientkit](https://github.com/gemaraproj/grc-store-clientkit) | `auth`: the device-flow login, the credential store, token resolution and refresh, the GitHub Actions OIDC token fetch. `trustroot`: the pinned Sigstore public-good `trusted_root.json`. Shared with privateer-sdk; grcli passes its own `auth.App{Name: "grcli", TokenEnv: "GRCLI_TOKEN", TokenFlag: "--token"}` so it keeps its own credential file and messages. | Hub protocol, Sigstore |
 | sigstore-go | Keyless signing (Fulcio, Rekor) and verification. | Sigstore |
 | oras-go | All registry I/O, OCI layouts, referrers. The `oras` CLI is used only to install grcli. | General |
 | `cue` binary | Schema validation. | General |
 | `cosign` binary | `publish --cosign-key`, `verify --cosign-key`. | Sigstore |
-| The hub (Semaphore) | Registry location, registry tokens, authorization, indexing, signer records, schema enforcement at publish. | Hub protocol |
+| The hub | Registry location, registry tokens, authorization, indexing, signer records, schema enforcement at publish. | Hub protocol |
 
 The hub is the dependency that matters most and is the only one that is not
 a library: grcli and the hub agree through `grc-store-protocol` and through

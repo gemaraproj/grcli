@@ -1,9 +1,7 @@
 # Design decisions
 
-Why grcli works the way it does. Each section gives the decision, the reason,
-and the architecture decision record (ADR) that made it. The ADRs live in the
-hub's repository, which is not public, so each is summarised here; the number
-and title let a maintainer with access find the full record.
+Why grcli works the way it does. Each section gives the decision and grcli's
+reason for it.
 
 ## One `--url`, and a discovery document
 
@@ -17,9 +15,6 @@ discovery document lets them type one URL, and lets an operator move the
 registry, or run a private mirror on plain HTTP, without every user
 reconfiguring. It follows the `openid-configuration` naming convention.
 
-ADR-0026 *Discovery endpoint for the CLI*; ADR-0028 *grcli OIDC clients*
-(adds the login fields); ADR-0032 (adds `ci_audience`).
-
 ## The hub mints every registry token
 
 **Decision.** The registry trusts bearer tokens signed by the hub.
@@ -31,10 +26,6 @@ namespace. Pull is granted widely, push only to a namespace's owners and
 trusted publishers, delete to nobody, so a published version cannot be
 removed through the registry.
 
-ADR-0029 *zot rejects anonymous writes*; ADR-0031 *Registry token service*;
-ADR-0084 and ADR-0092 (private namespaces and hubs without anonymous reads
-narrow the pull grant).
-
 ## Trusted publishing from CI, with no secret
 
 **Decision.** In GitHub Actions grcli presents the workflow's own OIDC token
@@ -45,9 +36,6 @@ namespace. There is no API key.
 minted per run and names exactly what is running. An earlier design ran the
 exchange through the identity server and still needed a client secret in CI;
 it was dropped for direct validation in the hub.
-
-ADR-0028 (device-flow login for humans); ADR-0032 *Hub-native CI trusted
-publishing*.
 
 ## The coordinate comes from the artifact
 
@@ -63,9 +51,6 @@ refuses a tag that differs from `metadata.version`
 differ. The hub authorizes the namespace it is about to write, derived from
 the body, not the one the request names.
 
-ADR-0033 *Sync tag/version invariant*; ADR-0050 *Authorize the derived bundle
-namespace*.
-
 ## Versions are immutable
 
 **Decision.** `publish` checks `GET /v1/catalogs/<ns>/<id>/versions/<v>`
@@ -74,8 +59,6 @@ before pushing and stops if the version exists or was yanked.
 **Why.** Consumers cache by version forever. The registry would accept an
 overwrite before the hub could refuse it, so grcli checks first. A yanked
 version stays taken.
-
-ADR-0033; ADR-0041 *Yank release candidates by convention*.
 
 ## A licence is required, and grcli is the strict end
 
@@ -87,9 +70,6 @@ known identifiers. It travels as the standard OCI annotation
 its consumers. grcli rejects typos; the hub rejects only a missing or
 malformed value and stores well-formed unknown identifiers, so a hub on an
 older SPDX list never blocks a newer publisher.
-
-ADR-0036 *Publisher-declared license at publish time*; ADR-0037 *Require a
-publication license*.
 
 ## Publish through a staging repository
 
@@ -104,10 +84,6 @@ mean "never served". Staging is a separate registry store that deletes
 anything older than about 24 hours, so an abandoned publish cleans itself
 up.
 
-ADR-0103 *Validate every published artifact body against its declared Gemara
-release* (introduced staging); ADR-0118 *Catalog versions are published
-through sync only*; ADR-0121 *Staging is its own zot store*.
-
 ## The hub validates the schema; grcli's `validate` is a preview
 
 **Decision.** `grcli validate` checks a file against the Gemara release it
@@ -118,9 +94,6 @@ that minor line), and refuses lines older than 1.5.
 **Why.** Holding a body to the release its author declared is predictable for
 publishers and lets them adopt a new Gemara release before the hub moves.
 Running the same check in grcli lets authors see failures before CI.
-
-ADR-0010 *Pinned spec ref* (superseded in part); ADR-0103; ADR-0115 *The hub
-refuses Gemara versions older than v1.5.0*.
 
 ## The hub verifies signatures at ingest and pins the signer
 
@@ -134,9 +107,6 @@ ingest gives every consumer a name to check against, and the pin stops a
 different workflow from publishing later versions. Catalogs and plugins now
 share one trust model.
 
-ADR-0045 *Verify catalog signatures at ingest — unify the catalog and plugin
-trust models*.
-
 ## Zero-flag verify, and an independent mode
 
 **Decision.** `grcli verify` with no trust flags checks against the hub's
@@ -146,9 +116,6 @@ recorded signer. `--certificate-identity` bypasses the hub.
 cryptography, and the identity it uses is printed before verification so
 the trust is visible. Users who do not want even that pass the identity
 themselves.
-
-ADR-0045 (decision 8); ADR-0044 *Drop project config and default the verify
-issuer* (the GitHub Actions issuer default).
 
 ## Sign and verify in-process
 
@@ -162,9 +129,6 @@ verification offline-capable and deterministic. grcli's verifier mirrors the
 hub's so the two cannot disagree by accident; it differs on purpose in
 pinning the identity, because grcli, unlike the hub, knows whom to expect.
 
-ADR-0046 *grcli in-process verification*; ADR-0049 *grcli signs keyless
-in-process*.
-
 ## `unpack` verifies by default
 
 **Decision.** `unpack` verifies the signature before writing anything and
@@ -173,8 +137,6 @@ fails closed. `--no-verify` opts out loudly.
 **Why.** Verification that does not gate the write is theatre. `verify`
 stays for the one job `unpack` cannot do: check a coordinate without
 downloading it.
-
-ADR-0048 *unpack verifies by default*.
 
 ## Resolve references at the consumer, never bundle them
 
@@ -189,10 +151,6 @@ one authored reference work against production, preview or a mirror. Never
 calling a host named in untrusted metadata keeps `unpack` from becoming a
 request-forgery tool.
 
-ADR-0039 *Resolve references client-side at unpack*; ADR-0040 *Index artifact
-references for discovery*; ADR-0088 (the hub records dependencies instead of
-bundling them).
-
 ## References are not signature-verified yet
 
 **Decision.** Resolved references are pulled and cached, but not verified;
@@ -200,8 +158,6 @@ they are marked `verified: false`.
 
 **Why.** Deferred to ship resolution first. Verify-on-pull is a separate
 decision still to be made.
-
-ADR-0080 *Defer signature verification of resolved references*.
 
 ## `cat`, and a cache of whole bundles
 
@@ -212,8 +168,6 @@ a disk cache of decoded bundles keyed by hub host, namespace, id and version.
 and repeated reads need no network. The cache holds the decoded bundle, not
 the raw OCI layout, so it serves both commands; the cost is that the
 signature is not cached, so `unpack` still goes online to verify.
-
-ADR-0042 *cat command and primary artifact cache*.
 
 ## One config file, and no per-project config
 
@@ -227,8 +181,6 @@ file passed explicitly with `--config` is a deliberate act, so a checked-in
 publish manifest is still possible. `cache-enabled` is a flat key because
 `GRCLI_CACHE` would otherwise hide a nested `cache.enabled`.
 
-ADR-0043 *User-global config file*; ADR-0044.
-
 ## One shared module for the wire contract
 
 **Decision.** Types that cross the wire live in `grc-store-protocol`, an open
@@ -240,8 +192,6 @@ need the contract open. Client logic (auth, signing, pushing) is left to each
 tool so the module stays small; shared client code went to
 `grc-store-clientkit` instead.
 
-ADR-0035 *Externalize the wire contract to a shared module*.
-
 ## Authentication lives in clientkit
 
 **Decision.** Device-flow login, the credential store, token refresh, the
@@ -249,5 +199,4 @@ GitHub Actions token fetch and the pinned Sigstore root come from
 `grc-store-clientkit`, shared with privateer-sdk.
 
 **Why.** grcli and privateer had near-identical copies, and the trust root was
-vendored three times; rotating it meant three edits. Recorded in the
-umbrella repository's notes rather than an ADR.
+vendored three times; rotating it meant three edits.

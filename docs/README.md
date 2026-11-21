@@ -61,7 +61,7 @@ Pages mark how far each behaviour reaches with these labels:
 | Label | Means |
 |---|---|
 | **General** | Works with any Gemara file or any OCI registry. No hub needed. |
-| **Hub protocol** | Needs a server that speaks the grc.store hub protocol (discovery document, `/v2/token`, `/v1/bundles/sync`, `/v1/catalogs`). [Semaphore](explanation/portability.md#what-the-hub-is) is the only implementation today. |
+| **Hub protocol** | Needs a server that speaks the grc.store hub protocol (discovery document, `/v2/token`, `/v1/bundles/sync`, `/v1/catalogs`). The [grc.store hub](explanation/portability.md#what-the-hub-is) is the only implementation today. |
 | **grc.store** | Hard-wired to the public grc.store deployment: a default URL, a host name, a URI. |
 | **GitHub Actions** | Assumes GitHub Actions is the CI system and its OIDC token is the identity. |
 | **Sigstore** | Assumes Sigstore (Fulcio and Rekor), by default the public-good instance. |
@@ -82,7 +82,3 @@ Pages mark how far each behaviour reaches with these labels:
 - **Staging repository**: `staging/<namespace>/<id>`, where grcli pushes a
   bundle before the hub checks it and copies it into the served repository
   `<namespace>/<id>`.
-- **ADR**: an architecture decision record. grcli's design decisions are
-  recorded in the hub's repository, which is not public; the
-  [design decisions](explanation/design-decisions.md) page summarises each one
-  that shapes grcli.

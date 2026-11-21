@@ -9,9 +9,8 @@ Sigstore. It is written from the code on `main`.
 ## What the hub is
 
 "The hub" is the server behind `--url`. The grc.store deployment runs
-**Semaphore**, Revanite's hub service, at `hub.grc.store`, with a
-[zot](https://zotregistry.dev) OCI registry beside it at `oci.grc.store` and
-Keycloak as its login server. Its source is not public. grcli talks to it
+its hub at `hub.grc.store`, with a [zot](https://zotregistry.dev) OCI registry
+beside it at `oci.grc.store` and an OIDC login server. grcli talks to it
 through:
 
 - the open wire types in `grc-store-protocol`, and
@@ -85,7 +84,7 @@ expected identity instead of looking one up. The pieces exist in
 `internal/registry` and `internal/sigverify`; the command layer assumes a hub
 throughout.
 
-### 3. A self-hosted Semaphore hub
+### 3. A self-hosted grc.store hub
 
 Works, with `--url` (or `GRCLI_URL`). Watch for:
 
