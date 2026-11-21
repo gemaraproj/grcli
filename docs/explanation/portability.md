@@ -31,7 +31,7 @@ grcli. None other exists today.
 | Coordinate derivation (`slugify(author.id)/slugify(id)`) | **Hub protocol** | A grc.store convention for namespaces; meaningless to a plain registry. |
 | Licence gate | **General** | SPDX validation and the standard OCI licence annotation. |
 | Provenance record | **General**, with a **grc.store** `buildType` URI (`https://grc.store/grcli/buildtype/v0`) and **GitHub Actions**-specific builder ids. |
-| Registry discovery | **Hub protocol** | Every remote command needs the discovery document. There is no `--registry` flag. |
+| Registry discovery | **Hub protocol** | Every remote command except `versions` needs the discovery document. There is no `--registry` flag. |
 | Registry tokens | **Hub protocol** | grcli asks the hub's `/v2/token`. Manual `GRCLI_REGISTRY_*` or Docker credentials work but discovery is still required. |
 | Staging push + sync | **Hub protocol** | `staging/<ns>/<id>`, then `POST /v1/bundles/sync`. |
 | Version pre-check | **Hub protocol** | `GET /v1/catalogs/…/versions/…`. |
@@ -77,7 +77,7 @@ hub.
 
 ### 2. Any OCI registry, no hub (GHCR, Harbor, a plain zot)
 
-Does not work. Every remote command starts with hub discovery, and `publish`
+Does not work. Every remote command except `versions` starts with hub discovery, and `publish`
 always pushes to `staging/…` and then calls `/v1/bundles/sync`. To support
 this, grcli would need a registry-only mode: a `--registry` target, a push to
 the named repository with no staging or sync, and verify/unpack that take an

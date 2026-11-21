@@ -11,7 +11,7 @@ Scope: **Hub protocol**. All paths are relative to `--url`.
 
 | Method and path | Called by | Auth | grcli uses |
 |---|---|---|---|
-| `GET /.well-known/grc-store-configuration` | every hub command | none | `registry_url` (required), `oidc_issuer`, `oidc_cli_client_id`, `ci_audience`. Cached per URL for the life of the process. 10 s timeout. |
+| `GET /.well-known/grc-store-configuration` | every hub command except `versions`; `cat`/`unpack` only on a cache miss or to verify | none | `registry_url` (required), `oidc_issuer`, `oidc_cli_client_id`, `ci_audience`. Cached per URL for the life of the process. 10 s timeout. |
 | `GET /v2/token?scope=repository:<repo>:<actions>` | `publish` (pull,push), `verify`/`unpack`/`cat` (pull) | Bearer for push; none for pull | `token` or `access_token` from the response. 10 s timeout. |
 | `GET /v1/catalogs/<ns>/<id>/versions/<v>` | `publish` pre-flight | none | Status only: `200` taken, `404` free, `410` yanked. |
 | `GET /v1/catalogs/<ns>/<id>` | `versions`, zero-flag `verify`/`unpack`, reference licence lookup | none | `latest_version`, `releases[]` (`version`, `manifest_digest`, `pushed_at`, `license`), `signer_identity`. |
