@@ -6,6 +6,9 @@ Go module and repo: `github.com/gemaraproj/grcli`; releases publish to `ghcr.io/
 
 `README.md` covers install (via `oras`), the full usage flow, and CI/trusted-publishing;
 `CHANGELOG.md` tracks the pre-1.0 breaking changes. This file is the map — point there, don't duplicate.
+`docs/` holds the full Diátaxis documentation (tutorials, how-to, reference, explanation), including
+`docs/explanation/known-gaps.md` (doc/behaviour mismatches, dead code) and
+`docs/explanation/portability.md` (what is general vs grc.store-specific). Keep them in step with code changes.
 
 > **Building new end-user tooling? Reuse this, don't fork it.** The `internal/` packages below
 > are the intended reuse surface, and the wire types come from
@@ -30,9 +33,9 @@ a user command.)
 
 ## Reuse surface (`internal/`)
 `hub` (`/v1/bundles/sync`, `/v2/token`, discovery) · `registry` (OCI packing via `oras-go`) ·
-`sign` (cosign shell-out, Sigstore bundle) · `provenance` (SLSA v1.0 predicate) · `source` (load/merge/verify YAML) · `refs` ·
+`sign` (keyless in-process via sigstore-go; cosign shell-out for `--cosign-key` only) · `provenance` (SLSA v1.0 predicate) · `source` (load/merge/verify YAML) · `refs` ·
 `digest` (SHA256) · `cache` (immutable-tag disk cache — v2 stores the whole bundle: files +
-`bundle.json`). Imports `grc-store-protocol` (discovery, syncapi, registrytoken, spdx, staging, apierror).
+`bundle.json`). Imports `grc-store-protocol` (apierror, discovery, identity, limits, mediatype, refurl, registrytoken, spdx, staging, syncapi). `sigverify` (keyless verification, mirrors the hub's verifier).
 `publish` pushes to `staging.Repository(<ns>/<name>)` and syncs the served name, with no fallback.
 **Auth is no longer here**: `internal/auth` (device flow, credential store, token resolution, GHA
 OIDC) was deleted in favour of `github.com/gemaraproj/grc-store-clientkit/auth`, shared with
