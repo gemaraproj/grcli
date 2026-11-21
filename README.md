@@ -85,6 +85,7 @@ Run `grcli <command> --help` for the full flag list. The typical flow is
 | `verify` | Verify a remote bundle's Sigstore signature (keyless: in-process, no cosign) — with no trust flags, against the signer identity the hub recorded at ingest. |
 | `unpack` | Verify a remote bundle's signature (fail-closed; `--no-verify` to skip) then write its files + manifest to disk. |
 | `cat` | Print an artifact's Gemara content to stdout (no files written) — for piping into `yq`. |
+| `versions` | List a catalog's published versions on the hub (`--latest` prints the newest). |
 | `logout` | Forget locally-stored credentials. |
 
 ```sh

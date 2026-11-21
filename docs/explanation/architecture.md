@@ -124,7 +124,7 @@ runs.
 
 ## Tests
 
-Every command has a `_test.go` in `cmd/`; those that need a hub use
+Every command except `login` and `logout` has a `_test.go` in `cmd/`; those that need a hub use
 `httptest` fakes. `cmd/integration_test.go` runs
 `publish --dry-run` into a local layout and `unpack` back out. No test
 publishes to a real hub or registry. `internal/`

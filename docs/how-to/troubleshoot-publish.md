@@ -67,5 +67,7 @@ After any refusal nothing was published; you fix the cause and run
 ## The publish "worked" but the artifact is not where you expected
 
 The coordinate comes from `metadata.author.id` and `metadata.id`, not from
-the namespace you meant. Run with `--dry-run` and read the
-`target.repository` field in `bundle.json` to see the derived value.
+the namespace you meant. Run with `--dry-run`, unpack the layout it writes
+with `grcli unpack --source <layout> --version <v>`, and read
+`metadata.provenance.buildDefinition.externalParameters.target.repository`
+in the `bundle.json` it writes to see the derived value.

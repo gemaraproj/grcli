@@ -8,35 +8,24 @@ grcli ships as a signed, multi-platform OCI artifact at
 
 ## On your machine
 
+The release workflow signs each image keylessly. Resolve the tag to a digest
+once, verify that digest with cosign, then pull and install the same digest,
+so the bytes you install are the bytes you verified:
+
 ```sh
+ref="ghcr.io/gemaraproj/grcli@$(oras resolve ghcr.io/gemaraproj/grcli:<tag>)"
+cosign verify "$ref" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/gemaraproj/grcli/.github/workflows/release.yml@'
 # platforms: linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
-oras pull ghcr.io/gemaraproj/grcli:<tag> --platform darwin/arm64
+oras pull "$ref" --platform darwin/arm64
 chmod +x grcli && sudo mv grcli /usr/local/bin/
 grcli --version
 ```
 
 Use a release tag for `<tag>`. `latest` also exists, but pinning is what
-makes an install reproducible.
-
-## Check the signature first
-
-The release workflow signs each image keylessly. Verify it with cosign before
-you install:
-
-```sh
-cosign verify ghcr.io/gemaraproj/grcli:<tag> \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp '^https://github.com/gemaraproj/grcli/.github/workflows/release.yml@'
-```
-
-To make sure you install the bytes you verified, resolve the tag to a digest
-once and use the digest for both steps:
-
-```sh
-ref="ghcr.io/gemaraproj/grcli@$(oras resolve ghcr.io/gemaraproj/grcli:<tag>)"
-cosign verify "$ref" …        # as above
-oras pull "$ref" --platform linux/amd64
-```
+makes an install reproducible. Skipping `cosign verify` installs a binary
+nobody has checked.
 
 ## In GitHub Actions
 
