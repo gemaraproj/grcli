@@ -353,6 +353,7 @@ type stagingFixture struct {
 	mu          sync.Mutex
 	pushedPaths []string
 	tokenScope  string
+	syncCalls   int
 	syncRepo    string
 }
 
@@ -389,8 +390,11 @@ func newStagingFixture(t *testing.T, refuse bool) *stagingFixture {
 		case strings.HasPrefix(r.URL.Path, "/v1/catalogs/"):
 			w.WriteHeader(http.StatusNotFound)
 		case r.URL.Path == "/v1/bundles/sync":
+			f.syncCalls++
 			var req struct{ Repository, Tag string }
-			_ = json.NewDecoder(r.Body).Decode(&req)
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("decoding sync request: %v", err)
+			}
 			f.syncRepo = req.Repository
 			fmt.Fprintf(w, `{"repository":%q,"tag":%q}`, req.Repository, req.Tag)
 		default:
@@ -418,6 +422,7 @@ func TestPublish_StagingWiring(t *testing.T) {
 	for _, p := range f.pushedPaths {
 		require.True(t, strings.HasPrefix(p, "/v2/staging/test-team/roundtrip-policy/"), "push outside staging: %s", p)
 	}
+	require.Equal(t, 1, f.syncCalls)
 	require.Equal(t, "test-team/roundtrip-policy", f.syncRepo)
 }
 
@@ -434,7 +439,7 @@ func TestPublish_StagingPushRefused(t *testing.T) {
 	for _, want := range []string{"staging repository staging/test-team/roundtrip-policy", `"test-team"`, "(401)"} {
 		require.ErrorContains(t, err, want)
 	}
-	require.Empty(t, f.syncRepo, "a refused push must not sync")
+	require.Zero(t, f.syncCalls, "a refused push must not sync")
 }
 
 // TestNewSignContext checks that the signature goes to the staging

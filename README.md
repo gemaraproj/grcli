@@ -28,8 +28,9 @@ In GitHub Actions:
     sudo install grcli /usr/local/bin/grcli
 ```
 
-Pin a release tag (`:v0.1.0`) instead of `latest` for reproducible
-installs. To verify the signature before installing:
+Pin a release tag (`:vX.Y.Z`) instead of `latest` for reproducible
+installs. v0.1.0 predates staging and cannot publish to a hub past the
+staging cutover; see the changelog. To verify the signature before installing:
 
 ```sh
 cosign verify ghcr.io/gemaraproj/grcli:latest \
