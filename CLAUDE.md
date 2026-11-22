@@ -6,10 +6,13 @@ Go module and repo: `github.com/gemaraproj/grcli`; releases publish to `ghcr.io/
 
 `README.md` covers install (via `oras`), the full usage flow, and CI/trusted-publishing;
 `CHANGELOG.md` tracks the pre-1.0 breaking changes. This file is the map — point there, don't duplicate.
+`docs/` holds the full Diátaxis documentation (tutorials, how-to, reference, explanation), including
+`docs/explanation/known-gaps.md` (doc/behaviour mismatches, dead code) and
+`docs/explanation/portability.md` (what is general vs grc.store-specific). Keep them in step with code changes.
 
 > **Building new end-user tooling? Reuse this, don't fork it.** The `internal/` packages below
-> are the intended reuse surface, and the wire types come from
-> `github.com/revanite-io/grc-store-protocol`.
+> are the intended reuse surface, and the wire types come from the
+> `grc-store-protocol` module (path in `go.mod`).
 
 ## Dev loop (Makefile)
 - `make build` → `bin/grcli` · `make test` (`./...`) · `make lint` (golangci-lint) · `make vet`
@@ -30,9 +33,9 @@ a user command.)
 
 ## Reuse surface (`internal/`)
 `hub` (`/v1/bundles/sync`, `/v2/token`, discovery) · `registry` (OCI packing via `oras-go`) ·
-`sign` (cosign shell-out, Sigstore bundle) · `provenance` (SLSA v1.0 predicate) · `source` (load/merge/verify YAML) · `refs` ·
+`sign` (keyless in-process via sigstore-go; cosign shell-out for `--cosign-key` only) · `provenance` (SLSA v1.0 predicate) · `source` (load/merge/verify YAML) · `refs` ·
 `digest` (SHA256) · `cache` (immutable-tag disk cache — v2 stores the whole bundle: files +
-`bundle.json`). Imports `grc-store-protocol` (discovery, syncapi, registrytoken, spdx, staging, apierror).
+`bundle.json`). Imports `grc-store-protocol` (apierror, discovery, identity, limits, mediatype, refurl, registrytoken, spdx, staging, syncapi). `sigverify` (keyless verification, mirrors the hub's verifier).
 `publish` pushes to `staging.Repository(<ns>/<name>)` and syncs the served name, with no fallback.
 **Auth is no longer here**: `internal/auth` (device flow, credential store, token resolution, GHA
 OIDC) was deleted in favour of `github.com/gemaraproj/grc-store-clientkit/auth`, shared with
@@ -40,7 +43,7 @@ privateer-sdk. `cmd.grcliApp` (`cmd/root.go`) is the per-tool identity that keep
 credential file and login hints — pass it to every clientkit auth call.
 
 ## Gotchas
-- **External tools on PATH**: `cosign` ≥ 2.6.0 is needed **only** for key-based signing (`publish --cosign-key`) and key-based `verify --cosign-key`; `cue` for `validate` (it fetches the Gemara module from the CUE registry into its own cache — no spec checkout; `CUE_REGISTRY` selects a mirror). **Keyless signing AND verifying are in-process — no cosign**, both via the embedded `sigstore-go`. Keyless `publish` (CI trusted publishing) requests the GHA OIDC token itself, hits Fulcio+Rekor, and attaches a DSSE in-toto bundle referrer (`internal/sign/keyless.go` + `registry.AttachSignatureReferrer`); override `GRCLI_FULCIO_URL`/`GRCLI_REKOR_URL` for a private Sigstore. When cosign IS used (key mode), grcli gates its bundle-format flag on the detected version (`internal/sign.BundleFormatArgs`: `--new-bundle-format` on 2.6–2.x, omitted ≥ 3.x, fail-fast below 2.6.0). The verify side mirrors the hub's `internal/sigverify`; the pinned trust root now comes from `grc-store-clientkit/trustroot` (rotate it there and re-tag the module — it is no longer vendored here), or point `GRCLI_TRUSTED_ROOT` at one. Catalog signatures are discovered as OCI referrers accepting BOTH signature stamp variants — `mediatype.CosignSignReferrer` (cosign 2.6.x) and `mediatype.SigstoreBundle` (cosign 3.x default) — since the stamp follows the signer's cosign major, not the artifact kind (the old "do not cross these" rule predated cosign 3.x; see the mediatype doc). OCI transport uses the `oras-go` **library**, not the `oras` CLI — `oras` is only needed to *install* grcli (see README), not to run it.
+- **External tools on PATH**: `cosign` ≥ 2.6.0 is needed **only** for key-based signing (`publish --cosign-key`) and key-based `verify --cosign-key`; `cue` for `validate` (it fetches the Gemara module from the CUE registry into its own cache — no spec checkout; `CUE_REGISTRY` selects a mirror). **Keyless signing AND verifying are in-process — no cosign**, both via the embedded `sigstore-go`. Keyless `publish` (CI trusted publishing) requests the GHA OIDC token itself, hits Fulcio+Rekor, and attaches a DSSE in-toto bundle referrer (`internal/sign/keyless.go` + `registry.AttachSignatureReferrer`); override `GRCLI_FULCIO_URL`/`GRCLI_REKOR_URL` for a private Sigstore. When cosign IS used (key mode), grcli gates its bundle-format flag on the detected version (`internal/sign.BundleFormatArgs`: `--new-bundle-format` on 2.6–2.x, omitted ≥ 3.x, fail-fast below 2.6.0). The verify side (`internal/sigverify`) mirrors the hub's verifier; the pinned trust root now comes from `grc-store-clientkit/trustroot` (rotate it there and re-tag the module — it is no longer vendored here), or point `GRCLI_TRUSTED_ROOT` at one. Catalog signatures are discovered as OCI referrers accepting BOTH signature stamp variants — `mediatype.CosignSignReferrer` (cosign 2.6.x) and `mediatype.SigstoreBundle` (cosign 3.x default) — since the stamp follows the signer's cosign major, not the artifact kind (the old "do not cross these" rule predated cosign 3.x; see the mediatype doc). OCI transport uses the `oras-go` **library**, not the `oras` CLI — `oras` is only needed to *install* grcli (see README), not to run it.
 - **Signing is on by default**; `--no-sign` to opt out.
 - **Caching**: remote `unpack`/`cat` fetches (and resolved references) are served from a global on-disk cache at `$GRCLI_CACHE` (default `os.UserCacheDir()/grcli`); a hit needs no network for the *content* (immutable tags → never stale). No GC yet. `--no-cache` per run; `cache-enabled: false` to disable durably. Caveat: a default `unpack` still hits the hub/registry to *verify* even on a content cache hit — `--no-verify` restores a fully offline hit.
 - Config: flag > `GRCLI_*` env > user-global `$XDG_CONFIG_HOME/grcli/config.yaml` (→ `~/.config/grcli/config.yaml`) > default. **No per-project layer** — a repo-local `./.grcli.yaml` is not read (a committed file must not steer a publish/verify tool) and earns a migration warning. `--config <file>` bypasses the search. The cache toggle key is flat `cache-enabled` (not nested `cache.enabled`) because `$GRCLI_CACHE` shadows the `cache.*` viper namespace. Env prefix `GRCLI_*` (e.g. `GRCLI_REGISTRY_TOKEN`, `GRCLI_GEMARA_VERSION`, `GRCLI_GEMARA_SPEC_DIR`). `grcli verify`'s `--certificate-oidc-issuer` defaults to GitHub Actions. (Neither `./.grcli.yaml` nor `$HOME/.grcli.yaml` is read.)

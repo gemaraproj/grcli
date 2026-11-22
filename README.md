@@ -5,6 +5,9 @@ A command-line tool for the GRC artifact registry at
 spec, packs it into a signed OCI bundle with SLSA-shaped provenance,
 publishes it to a registry, and verifies bundles you fetch back.
 
+Full documentation (tutorials, how-to guides, command and format reference,
+and design explanations) is in [`docs/`](docs/README.md).
+
 ## Install or Upgrade
 
 Binaries are published as a public, signed, multi-platform OCI artifact
@@ -28,8 +31,10 @@ In GitHub Actions:
     sudo install grcli /usr/local/bin/grcli
 ```
 
-Pin a release tag (`:v0.1.0`) instead of `latest` for reproducible
-installs. To verify the signature before installing:
+Pin a release tag (`:<release>`) instead of `latest` for reproducible
+installs. To publish to a hub past the staging cutover, `<release>` must be a
+grcli release that pushes to staging; no published image does yet (see
+[known gaps](docs/explanation/known-gaps.md#no-release-carries-the-staging-change)). To verify the signature before installing:
 
 ```sh
 cosign verify ghcr.io/gemaraproj/grcli:latest \
@@ -80,6 +85,7 @@ Run `grcli <command> --help` for the full flag list. The typical flow is
 | `verify` | Verify a remote bundle's Sigstore signature (keyless: in-process, no cosign) — with no trust flags, against the signer identity the hub recorded at ingest. |
 | `unpack` | Verify a remote bundle's signature (fail-closed; `--no-verify` to skip) then write its files + manifest to disk. |
 | `cat` | Print an artifact's Gemara content to stdout (no files written) — for piping into `yq`. |
+| `versions` | List a catalog's published versions on the hub (`--latest` prints the newest). |
 | `logout` | Forget locally-stored credentials. |
 
 ```sh
@@ -90,12 +96,14 @@ grcli login
 # metadata.gemara-version (override with --gemara-version 1.6.0 | latest)
 grcli validate -f controls.yaml
 
-# Publish — picks up the stored login token; signs by default.
-# --license is REQUIRED and takes an SPDX expression; publish
-# fails before any network call without it. Use your catalog's real terms.
-# Locally you must also supply signing material: --cosign-key (below) or
-# --no-sign. Keyless signing is CI-only — see "Signing" further down.
-grcli publish -f controls.yaml --license Apache-2.0 --cosign-key cosign.key
+# Build the bundle locally without publishing it. --license is REQUIRED
+# and takes an SPDX expression; publish fails before any network call
+# without it. Use your catalog's real terms.
+grcli publish -f controls.yaml --license Apache-2.0 --dry-run
+
+# Publishing to grc.store happens from GitHub Actions (keyless signing; see
+# "Publishing from GitHub Actions"). The hub refuses key-signed (--cosign-key)
+# and unsigned (--no-sign) catalogs at sync.
 
 # The OCI tag is metadata.version. --version stamps a value into the
 # bundle before packing — filling it in for a draft that omits it, or
@@ -145,7 +153,10 @@ so a failed publish is fixed by running `grcli publish` again. There is no
 fallback: a hub from before the staging cutover gives no push grant on
 `staging/...`, and the push fails with `401` naming the staging repository.
 Older grcli releases push the served repository directly, which a cut-over hub
-refuses with a `401 UNAUTHORIZED` at the first blob push; upgrade grcli.
+refuses with a `401 UNAUTHORIZED` at the first blob push. No published image
+pushes to staging yet, including `latest`, so the CI example below fails
+against a cut-over hub until one is released (see
+[known gaps](docs/explanation/known-gaps.md#no-release-carries-the-staging-change)).
 
 **This is the usual cause of a 403 on publish.** Authorization is per
 *namespace* (the part before the `/`), so you must own — or hold a trusted
@@ -156,14 +167,10 @@ namespace belongs to that upstream.
 **The fix is to change `metadata.author.id` in the bundle** (or have the
 binding registered for the namespace the metadata actually names).
 
-> **`--repository` is not a workaround for a 403.** It overrides only the
-> **OCI push destination** — the hub still indexes the artifact under
-> `slugify(metadata.author.id)`. Pointing it at a namespace that disagrees
-> with the metadata splits the two apart: the blobs land in one repository
-> while the index row is written under another. The publish *appears* to
-> succeed, the artifact does not show up where you aimed it, and re-running
-> fails with a digest conflict. Use `--repository` only when it agrees with
-> what the metadata derives.
+> **`--repository` is not a workaround for a 403.** The hub authorizes and
+> indexes the namespace the metadata derives, and refuses a sync whose
+> repository disagrees with it (`422 catalog_coordinate_mismatch`). Use
+> `--repository` only when it agrees with what the metadata derives.
 
 ### Reading artifacts: `unpack` vs `cat`
 
@@ -251,6 +258,10 @@ material depends on where you run (`internal/sign.Preflight`):
 | Anywhere else | `--cosign-key` (or `COSIGN_KEY`) | **yes**, ≥ 2.6.0 |
 | Either, opting out | `--no-sign` | no |
 
+A grc.store hub accepts only the first row: it refuses key-signed and
+unsigned catalogs at sync. The other two rows serve `--dry-run` work and
+hubs that accept them.
+
 So a **local** `publish` with neither a key nor `--no-sign` is refused up
 front — keyless signing is a CI-only path, because it depends on the
 workflow's OIDC identity:
@@ -298,7 +309,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # v2: https://github.com/oras-project/setup-oras/releases/tag/v2.0.0
       - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
       - run: |
