@@ -203,14 +203,14 @@ func TestCheckBundle(t *testing.T) {
 			Etag:   desc.Digest.Hex(),
 		}
 		err := CheckBundle(ctx, store, desc.Digest.String(), b)
-		require.ErrorContains(t, err, "content does not match")
+		require.ErrorIs(t, err, ErrContentMismatch)
 	})
 
 	t.Run("renamed file fails", func(t *testing.T) {
 		store := memory.New()
 		desc := publishTo(t, store, "id: a\n")
 		b := &bundle.Bundle{Source: bundle.File{Name: "../x.yaml", Data: []byte("id: a\n")}}
-		require.ErrorContains(t, CheckBundle(ctx, store, desc.Digest.String(), b), "content does not match")
+		require.ErrorIs(t, CheckBundle(ctx, store, desc.Digest.String(), b), ErrContentMismatch)
 	})
 
 	t.Run("tag moved between pull and verify fails", func(t *testing.T) {
@@ -221,7 +221,7 @@ func TestCheckBundle(t *testing.T) {
 		moved := publishTo(t, store, "id: b\n") // tag now names b; the signature check sees b
 
 		err = CheckBundle(ctx, store, moved.Digest.String(), pulled)
-		require.ErrorContains(t, err, "content does not match")
+		require.ErrorIs(t, err, ErrContentMismatch)
 	})
 
 	t.Run("extra file fails", func(t *testing.T) {
@@ -230,6 +230,61 @@ func TestCheckBundle(t *testing.T) {
 		b, err := bundle.Unpack(ctx, store, "1.0.0")
 		require.NoError(t, err)
 		b.Imports = append(b.Imports, bundle.File{Name: "extra.yaml", Data: []byte("x")})
-		require.ErrorContains(t, CheckBundle(ctx, store, desc.Digest.String(), b), "file count differs")
+		require.ErrorIs(t, CheckBundle(ctx, store, desc.Digest.String(), b), ErrContentMismatch)
+	})
+
+	t.Run("imports are matched in order", func(t *testing.T) {
+		store := memory.New()
+		src := &bundle.Bundle{
+			Manifest: bundle.Manifest{BundleVersion: "1.0"},
+			Source:   bundle.File{Name: "controls.yaml", Data: []byte("id: a\n")},
+			Imports: []bundle.File{
+				{Name: "one.yaml", Data: []byte("id: one\n")},
+				{Name: "two.yaml", Data: []byte("id: two\n")},
+			},
+		}
+		desc, err := bundle.Pack(ctx, store, src)
+		require.NoError(t, err)
+		require.NoError(t, store.Tag(ctx, desc, desc.Digest.String()))
+
+		b, err := bundle.Unpack(ctx, store, desc.Digest.String())
+		require.NoError(t, err)
+		require.Len(t, b.Imports, 2)
+		require.NoError(t, CheckBundle(ctx, store, desc.Digest.String(), b))
+
+		b.Imports[1].Data = []byte("id: other\n")
+		require.ErrorIs(t, CheckBundle(ctx, store, desc.Digest.String(), b), ErrContentMismatch)
+
+		b.Imports = b.Imports[:1]
+		require.ErrorIs(t, CheckBundle(ctx, store, desc.Digest.String(), b), ErrContentMismatch)
+	})
+
+	t.Run("malformed or unknown digest is not a content mismatch", func(t *testing.T) {
+		store := memory.New()
+		publishTo(t, store, "id: a\n")
+		b := &bundle.Bundle{Source: bundle.File{Name: "controls.yaml", Data: []byte("id: a\n")}}
+		err := CheckBundle(ctx, store, "not-a-digest", b)
+		require.Error(t, err)
+		require.NotErrorIs(t, err, ErrContentMismatch)
+		err = CheckBundle(ctx, store, godigest.FromString("absent").String(), b)
+		require.Error(t, err)
+		require.NotErrorIs(t, err, ErrContentMismatch)
+	})
+
+	t.Run("non-bundle config leaves an empty bundle manifest", func(t *testing.T) {
+		store := memory.New()
+		body := []byte("id: a\n")
+		layer := pushBlob(t, store, bundle.MediaTypeArtifact, body)
+		layer.Annotations = map[string]string{ocispec.AnnotationTitle: "controls.yaml"}
+		config := pushBlob(t, store, "application/vnd.example.other+json", []byte(`{"bundle-version":"9"}`))
+		desc := pushManifest(t, store, ocispec.Manifest{Config: config, Layers: []ocispec.Descriptor{layer}})
+		require.NoError(t, store.Tag(ctx, desc, desc.Digest.String()))
+
+		b := &bundle.Bundle{
+			Manifest: bundle.Manifest{BundleVersion: "cached"},
+			Source:   bundle.File{Name: "controls.yaml", Data: body},
+		}
+		require.NoError(t, CheckBundle(ctx, store, desc.Digest.String(), b))
+		require.True(t, b.Manifest.Empty(), "only a digest-checked bundle config may fill bundle.json")
 	})
 }

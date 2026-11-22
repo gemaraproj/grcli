@@ -2,8 +2,9 @@
 
 // Package cache is a Go-module-style on-disk cache for artifacts grcli
 // pulls. grc.store tags are immutable,
-// so a coordinate (host, namespace, id, version) maps to fixed bytes forever —
-// a cache hit can never be stale, which is what makes this sound. Entries are
+// so a coordinate (host, namespace, id, version) is expected to map to fixed
+// bytes. The cache does not prove that on its own: a verified unpack checks a
+// hit against the signed manifest digest before writing it. Entries are
 // host-namespaced so prod, staging, and self-hosted hubs stay separate. (Caveat:
 // coordinate components are sanitized to single path segments, so two coordinates
 // that differ only in characters sanitize() folds together — e.g. "a/b" vs "a_b"

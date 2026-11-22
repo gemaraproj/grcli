@@ -345,14 +345,14 @@ func fetchCapped(ctx context.Context, target oras.ReadOnlyTarget, desc ocispec.D
 	return io.ReadAll(io.LimitReader(rc, maxSignatureBlobBytes))
 }
 
-// PinBundle is CheckBundle against the remote registry.
-func PinBundle(ctx context.Context, registryHost, repository, manifestDigest string, b *bundle.Bundle) error {
-	repo, err := newRemoteRepo(registryHost, repository)
-	if err != nil {
-		return err
-	}
-	return CheckBundle(ctx, repo, manifestDigest, b)
+// RemoteTarget is the remote repository as a read-only target, for CheckBundle.
+func RemoteTarget(registryHost, repository string) (oras.ReadOnlyTarget, error) {
+	return newRemoteRepo(registryHost, repository)
 }
+
+// ErrContentMismatch marks a CheckBundle failure caused by the bundle's own
+// content, as opposed to a registry or transport error.
+var ErrContentMismatch = errors.New("content does not match the verified manifest")
 
 // CheckBundle ties b to the manifest at manifestDigest, the digest a signature
 // was verified against. b may come from the cache or from a pull by tag, so its
@@ -402,13 +402,13 @@ func CheckBundle(ctx context.Context, target oras.ReadOnlyTarget, manifestDigest
 		var f bundle.File
 		if l.Annotations[annotationRole] == roleImport {
 			if nImports >= len(b.Imports) {
-				return fmt.Errorf("content does not match %s: import layer %s missing", want, l.Digest)
+				return fmt.Errorf("%w %s: import layer %s missing", ErrContentMismatch, want, l.Digest)
 			}
 			f = b.Imports[nImports]
 			nImports++
 		} else {
 			if sawSource {
-				return fmt.Errorf("manifest %s holds more than one source artifact", want)
+				return fmt.Errorf("%w %s: more than one source artifact", ErrContentMismatch, want)
 			}
 			sawSource, f = true, b.Source
 		}
@@ -416,11 +416,11 @@ func CheckBundle(ctx context.Context, target oras.ReadOnlyTarget, manifestDigest
 			return fmt.Errorf("manifest %s layer digest: %w", want, err)
 		}
 		if f.Name != l.Annotations[ocispec.AnnotationTitle] || l.Digest.Algorithm().FromBytes(f.Data) != l.Digest {
-			return fmt.Errorf("content does not match %s: %q differs from layer %s", want, f.Name, l.Digest)
+			return fmt.Errorf("%w %s: %q differs from layer %s", ErrContentMismatch, want, f.Name, l.Digest)
 		}
 	}
 	if sawSource != (b.Source.Name != "") || nImports != len(b.Imports) {
-		return fmt.Errorf("content does not match %s: file count differs", want)
+		return fmt.Errorf("%w %s: file count differs", ErrContentMismatch, want)
 	}
 	b.Manifest = manifest
 	b.Etag = want.Hex()

@@ -17,6 +17,7 @@ import (
 	"github.com/gemaraproj/go-gemara/bundle"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"oras.land/oras-go/v2"
 
 	"github.com/gemaraproj/grcli/internal/cache"
 	"github.com/gemaraproj/grcli/internal/hub"
@@ -71,7 +72,8 @@ without verification.
 Caching: a remote (--url) fetch is served from a global on-disk
 cache when the same namespace/id/version has been fetched before — a cache
 hit for the artifact bytes needs no network. grc.store tags are immutable,
-so a hit can never be stale. (Best-effort exception: resolving references
+so a cached version is expected to stay current; a verified unpack still
+checks it against the signed digest. (Best-effort exception: resolving references
 makes short-deadline hub lookups for LICENSE METADATA only — the primary's
 license baseline, and a one-time lookup for any cached reference whose
 license was never confirmed; failures are reported and never block.) Set
@@ -254,11 +256,28 @@ func verifyBeforeUnpack(ctx context.Context, v *viper.Viper, b *bundle.Bundle, o
 	if err != nil {
 		return fmt.Errorf("signature verification failed — refusing to unpack: %w", err)
 	}
-	if err := registry.PinBundle(ctx, policy.registryHost, policy.repository, artifactDigest, b); err != nil {
-		dropCachedPrimary(v, out)
-		return fmt.Errorf("refusing to unpack: %w", err)
+	target, err := registry.RemoteTarget(policy.registryHost, policy.repository)
+	if err != nil {
+		return err
+	}
+	if err := pinVerified(ctx, v, target, artifactDigest, b, out); err != nil {
+		return err
 	}
 	fmt.Fprintf(out, "verified: %s\n", res.Identity)
+	return nil
+}
+
+// pinVerified pins b to the verified manifest digest. Content that does not
+// match also drops the cached entry; a registry or transport error leaves it.
+func pinVerified(ctx context.Context, v *viper.Viper, target oras.ReadOnlyTarget, manifestDigest string, b *bundle.Bundle, out io.Writer) error {
+	err := registry.CheckBundle(ctx, target, manifestDigest, b)
+	if errors.Is(err, registry.ErrContentMismatch) {
+		dropCachedPrimary(v, out)
+		return fmt.Errorf("refusing to unpack: %w (any cached copy was dropped; run again to pull afresh)", err)
+	}
+	if err != nil {
+		return fmt.Errorf("checking content against the verified digest: %w", err)
+	}
 	return nil
 }
 
