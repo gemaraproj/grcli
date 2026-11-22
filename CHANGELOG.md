@@ -13,8 +13,8 @@ change bumps the minor version.
   the served repository, so this release cannot publish to a hub from before
   the staging cutover, and older releases cannot publish to a hub after it
   (their first blob push gets `401 UNAUTHORIZED`).
-- The hub client's timeout rises from 60 seconds to 3 minutes, above the
-  hub's 120-second catalog sync deadline.
+- The sync call's timeout rises from 60 seconds to 3 minutes, above the
+  hub's 120-second catalog sync deadline. Other hub calls keep 60 seconds.
 - A refused push names the staging repository and the namespace you need to
   own, and a refused sync shows the hub's error code and says whether to
   publish again.

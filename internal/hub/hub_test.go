@@ -208,48 +208,82 @@ func TestReleaseFor_License(t *testing.T) {
 }
 
 // TestSync_Refusal checks that a refusal reads the hub's apierror envelope
-// and says whether to publish again, naming the staging repository when the
-// hub could not read the staged bundle.
+// into SyncError and says whether to publish again, naming the staging
+// repository when the hub could not read the staged bundle.
 func TestSync_Refusal(t *testing.T) {
 	cases := []struct {
-		status int
-		body   string
-		want   []string
+		name         string
+		status       int
+		body         string
+		code, detail string
+		want         []string
 	}{
-		{http.StatusBadRequest, `{"error":"fetch_failed","detail":"manifest unknown"}`,
-			[]string{"(400 fetch_failed): manifest unknown", "staging/a/b", "24 hours", "grcli publish again"}},
-		{http.StatusUnprocessableEntity, `{"error":"gemara_version_unsupported","detail":"declare 1.5.0 or later"}`,
+		{"fetch failed", http.StatusBadRequest, `{"error":"fetch_failed","detail":"manifest unknown"}`,
+			"fetch_failed", "manifest unknown",
+			[]string{"(400 fetch_failed): manifest unknown", "could not read the bundle from staging/a/b", "grcli publish again"}},
+		{"rejected", http.StatusUnprocessableEntity, `{"error":"gemara_version_unsupported","detail":"declare 1.5.0 or later"}`,
+			"gemara_version_unsupported", "declare 1.5.0 or later",
 			[]string{"(422 gemara_version_unsupported): declare 1.5.0 or later", "discarded the staged upload"}},
-		{http.StatusForbidden, `{"error":"forbidden","detail":"bundle sync requires ownership of namespace \"a\""}`,
-			[]string{"(403 forbidden)", "ownership of namespace"}},
-		{http.StatusUnauthorized, `{"error":"unauthorized","detail":"token expired"}`,
+		{"forbidden", http.StatusForbidden, `{"error":"forbidden","detail":"bundle sync requires ownership of namespace \"a\""}`,
+			"forbidden", `bundle sync requires ownership of namespace "a"`,
+			[]string{"(403 forbidden)", "ownership of namespace", "discarded the staged upload"}},
+		{"unauthorized", http.StatusUnauthorized, `{"error":"unauthorized","detail":"token expired"}`,
+			"unauthorized", "token expired",
 			[]string{"grcli login"}},
-		{http.StatusServiceUnavailable, `{"error":"schema_check_unavailable","detail":"busy"}`,
+		{"rate limited", http.StatusTooManyRequests, `{"error":"rate_limited","detail":"slow down"}`,
+			"rate_limited", "slow down",
+			[]string{"(429 rate_limited)", "in a moment"}},
+		{"unavailable", http.StatusServiceUnavailable, `{"error":"schema_check_unavailable","detail":"busy"}`,
+			"schema_check_unavailable", "busy",
 			[]string{"(503 schema_check_unavailable)", "in a moment"}},
+		{"no envelope", http.StatusBadGateway, "upstream gone\n",
+			"", "upstream gone",
+			[]string{"(502): upstream gone", "in a moment"}},
 	}
 	for _, tc := range cases {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(tc.status)
-			_, _ = w.Write([]byte(tc.body))
-		}))
-		_, err := New(srv.URL, "test-token").Sync(context.Background(), "a/b", "1.0.0")
-		srv.Close()
-		var se *SyncError
-		if !errors.As(err, &se) {
-			t.Fatalf("%d: want *SyncError, got %v", tc.status, err)
-		}
-		for _, want := range tc.want {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("%d: error %q must contain %q", tc.status, err, want)
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			_, err := New(srv.URL, "test-token").Sync(context.Background(), "a/b", "1.0.0")
+			var se *SyncError
+			if !errors.As(err, &se) {
+				t.Fatalf("want *SyncError, got %v", err)
 			}
-		}
+			want := SyncError{URL: srv.URL + "/v1/bundles/sync", Repository: "a/b", Tag: "1.0.0",
+				Status: tc.status, Code: tc.code, Detail: tc.detail}
+			if *se != want {
+				t.Errorf("SyncError = %+v, want %+v", *se, want)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("error %q must contain %q", err, w)
+				}
+			}
+		})
 	}
 }
 
-// TestNew_TimeoutAboveSyncDeadline holds the client timeout above the hub's
-// 120-second catalog sync write deadline.
-func TestNew_TimeoutAboveSyncDeadline(t *testing.T) {
-	if got := New("http://hub", "").HTTP.Timeout; got <= 120*time.Second {
-		t.Errorf("timeout = %s, want above the hub's 120s sync deadline", got)
+// TestSync_OwnTimeout checks that the sync waits past the client's general
+// timeout (which bounds every other hub call), since the hub may take up to
+// its 120-second sync deadline to answer.
+func TestSync_OwnTimeout(t *testing.T) {
+	if syncTimeout <= 120*time.Second {
+		t.Fatalf("syncTimeout = %s, want above the hub's 120s sync deadline", syncTimeout)
+	}
+	if got := New("http://hub", "").HTTP.Timeout; got != requestTimeout || got >= syncTimeout {
+		t.Fatalf("client timeout = %s, want %s and below syncTimeout", got, requestTimeout)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "test-token")
+	c.HTTP.Timeout = 50 * time.Millisecond
+	if _, err := c.Sync(context.Background(), "a/b", "1.0.0"); err != nil {
+		t.Fatalf("sync must not use the general timeout: %v", err)
 	}
 }
