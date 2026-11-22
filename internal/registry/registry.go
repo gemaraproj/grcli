@@ -345,6 +345,94 @@ func fetchCapped(ctx context.Context, target oras.ReadOnlyTarget, desc ocispec.D
 	return io.ReadAll(io.LimitReader(rc, maxSignatureBlobBytes))
 }
 
+// PinBundle is CheckBundle against the remote registry.
+func PinBundle(ctx context.Context, registryHost, repository, manifestDigest string, b *bundle.Bundle) error {
+	repo, err := newRemoteRepo(registryHost, repository)
+	if err != nil {
+		return err
+	}
+	return CheckBundle(ctx, repo, manifestDigest, b)
+}
+
+// CheckBundle ties b to the manifest at manifestDigest, the digest a signature
+// was verified against. b may come from the cache or from a pull by tag, so its
+// own Etag proves nothing: CheckBundle fetches that manifest (digest-checked),
+// requires every artifact file in b to match its layer's name and digest, and
+// replaces b.Manifest with the digest-checked config blob. On success b holds
+// only content the manifest names, and b.Etag is manifestDigest's hex.
+func CheckBundle(ctx context.Context, target oras.ReadOnlyTarget, manifestDigest string, b *bundle.Bundle) error {
+	want, err := godigest.Parse(manifestDigest)
+	if err != nil {
+		return fmt.Errorf("verified digest %q: %w", manifestDigest, err)
+	}
+	desc, err := target.Resolve(ctx, want.String())
+	if err != nil {
+		return fmt.Errorf("resolving %s: %w", want, err)
+	}
+	if desc.Digest != want {
+		return fmt.Errorf("registry resolved %s to %s", want, desc.Digest)
+	}
+	raw, err := content.FetchAll(ctx, target, desc) // checks size and digest
+	if err != nil {
+		return fmt.Errorf("fetching manifest %s: %w", want, err)
+	}
+	var m ocispec.Manifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return fmt.Errorf("parsing manifest %s: %w", want, err)
+	}
+
+	var manifest bundle.Manifest
+	if m.Config.MediaType == bundle.MediaTypeManifest {
+		cfg, err := content.FetchAll(ctx, target, m.Config)
+		if err != nil {
+			return fmt.Errorf("fetching bundle manifest: %w", err)
+		}
+		if err := json.Unmarshal(cfg, &manifest); err != nil {
+			return fmt.Errorf("parsing bundle manifest: %w", err)
+		}
+	}
+
+	// Walk the artifact layers the way bundle.Unpack assigns them: one source,
+	// imports in order.
+	sawSource, nImports := false, 0
+	for _, l := range m.Layers {
+		if l.MediaType != bundle.MediaTypeArtifact {
+			continue
+		}
+		var f bundle.File
+		if l.Annotations[annotationRole] == roleImport {
+			if nImports >= len(b.Imports) {
+				return fmt.Errorf("content does not match %s: import layer %s missing", want, l.Digest)
+			}
+			f = b.Imports[nImports]
+			nImports++
+		} else {
+			if sawSource {
+				return fmt.Errorf("manifest %s holds more than one source artifact", want)
+			}
+			sawSource, f = true, b.Source
+		}
+		if err := l.Digest.Validate(); err != nil {
+			return fmt.Errorf("manifest %s layer digest: %w", want, err)
+		}
+		if f.Name != l.Annotations[ocispec.AnnotationTitle] || l.Digest.Algorithm().FromBytes(f.Data) != l.Digest {
+			return fmt.Errorf("content does not match %s: %q differs from layer %s", want, f.Name, l.Digest)
+		}
+	}
+	if sawSource != (b.Source.Name != "") || nImports != len(b.Imports) {
+		return fmt.Errorf("content does not match %s: file count differs", want)
+	}
+	b.Manifest = manifest
+	b.Etag = want.Hex()
+	return nil
+}
+
+// Layer annotations go-gemara's bundle.Unpack reads (unexported there).
+const (
+	annotationRole = "org.gemara.artifact.role"
+	roleImport     = "import"
+)
+
 // UnpackLocal reads a Gemara bundle from an OCI image layout directory.
 // It is the inverse of PushLocal: the same dir + tag round-trips the bundle.
 func UnpackLocal(ctx context.Context, dir, tag string) (*bundle.Bundle, error) {

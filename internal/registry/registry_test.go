@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/gemaraproj/go-gemara/bundle"
 	godigest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/revanite-io/grc-store-protocol/mediatype"
@@ -161,4 +162,74 @@ func TestDiscoverSignatureBundle_MalformedReferrerErrors(t *testing.T) {
 	_, err := discoverSignatureBundle(context.Background(), store, subject)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "carries no")
+}
+
+// publishTo packs body into store under tag 1.0.0 and also tags it by digest,
+// so the memory store resolves a digest reference the way a registry does.
+func publishTo(t *testing.T, store *memory.Store, body string) ocispec.Descriptor {
+	t.Helper()
+	ctx := context.Background()
+	desc, _, err := pack(ctx, store, "1.0.0", PackInput{Filename: "controls.yaml", ArtifactType: "ControlCatalog", Body: []byte(body)})
+	require.NoError(t, err)
+	require.NoError(t, store.Tag(ctx, desc, desc.Digest.String()))
+	return desc
+}
+
+// TestCheckBundle pins unpacked content to the digest a signature was verified
+// against: matching content passes, and content from anywhere else fails.
+func TestCheckBundle(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("matching content passes and takes the verified config", func(t *testing.T) {
+		store := memory.New()
+		desc := publishTo(t, store, "id: a\n")
+		b, err := bundle.Unpack(ctx, store, "1.0.0")
+		require.NoError(t, err)
+		b.Manifest.GemaraVersion = "tampered" // a cached bundle.json is not trusted
+		b.Etag = "whatever"
+
+		require.NoError(t, CheckBundle(ctx, store, desc.Digest.String(), b))
+		require.Equal(t, desc.Digest.Hex(), b.Etag)
+		require.Equal(t, "1.0", b.Manifest.BundleVersion)
+		require.Empty(t, b.Manifest.GemaraVersion)
+	})
+
+	t.Run("tampered cache entry fails", func(t *testing.T) {
+		store := memory.New()
+		desc := publishTo(t, store, "id: a\n")
+		// What a rewritten cache entry yields: right name, right Etag, other bytes.
+		b := &bundle.Bundle{
+			Source: bundle.File{Name: "controls.yaml", Data: []byte("id: evil\n")},
+			Etag:   desc.Digest.Hex(),
+		}
+		err := CheckBundle(ctx, store, desc.Digest.String(), b)
+		require.ErrorContains(t, err, "content does not match")
+	})
+
+	t.Run("renamed file fails", func(t *testing.T) {
+		store := memory.New()
+		desc := publishTo(t, store, "id: a\n")
+		b := &bundle.Bundle{Source: bundle.File{Name: "../x.yaml", Data: []byte("id: a\n")}}
+		require.ErrorContains(t, CheckBundle(ctx, store, desc.Digest.String(), b), "content does not match")
+	})
+
+	t.Run("tag moved between pull and verify fails", func(t *testing.T) {
+		store := memory.New()
+		publishTo(t, store, "id: a\n")
+		pulled, err := bundle.Unpack(ctx, store, "1.0.0") // pulled while the tag named a
+		require.NoError(t, err)
+		moved := publishTo(t, store, "id: b\n") // tag now names b; the signature check sees b
+
+		err = CheckBundle(ctx, store, moved.Digest.String(), pulled)
+		require.ErrorContains(t, err, "content does not match")
+	})
+
+	t.Run("extra file fails", func(t *testing.T) {
+		store := memory.New()
+		desc := publishTo(t, store, "id: a\n")
+		b, err := bundle.Unpack(ctx, store, "1.0.0")
+		require.NoError(t, err)
+		b.Imports = append(b.Imports, bundle.File{Name: "extra.yaml", Data: []byte("x")})
+		require.ErrorContains(t, CheckBundle(ctx, store, desc.Digest.String(), b), "file count differs")
+	})
 }

@@ -218,6 +218,11 @@ func (c *Cache) Put(host, namespace, id, version string, e Entry) error {
 	return nil
 }
 
+// Delete removes a coordinate's entry. A missing entry is not an error.
+func (c *Cache) Delete(host, namespace, id, version string) error {
+	return os.RemoveAll(c.entryDir(host, namespace, id, version))
+}
+
 // Digest returns the sha256 content digest of b in "sha256:<hex>" form — the
 // same value recorded on a cache blob, exported so callers can record it for
 // content that bypasses the cache (e.g. under --no-cache).
