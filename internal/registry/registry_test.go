@@ -185,7 +185,7 @@ func TestCheckBundle(t *testing.T) {
 		desc := publishTo(t, store, "id: a\n")
 		b, err := bundle.Unpack(ctx, store, "1.0.0")
 		require.NoError(t, err)
-		b.Manifest.GemaraVersion = "tampered" // a cached bundle.json is not trusted
+		b.Manifest.GemaraVersion = "other" // a cached bundle.json is not trusted
 		b.Etag = "whatever"
 
 		require.NoError(t, CheckBundle(ctx, store, desc.Digest.String(), b))
@@ -194,12 +194,12 @@ func TestCheckBundle(t *testing.T) {
 		require.Empty(t, b.Manifest.GemaraVersion)
 	})
 
-	t.Run("tampered cache entry fails", func(t *testing.T) {
+	t.Run("cache entry with other bytes fails", func(t *testing.T) {
 		store := memory.New()
 		desc := publishTo(t, store, "id: a\n")
-		// What a rewritten cache entry yields: right name, right Etag, other bytes.
+		// Right name and Etag, other bytes.
 		b := &bundle.Bundle{
-			Source: bundle.File{Name: "controls.yaml", Data: []byte("id: evil\n")},
+			Source: bundle.File{Name: "controls.yaml", Data: []byte("id: other\n")},
 			Etag:   desc.Digest.Hex(),
 		}
 		err := CheckBundle(ctx, store, desc.Digest.String(), b)

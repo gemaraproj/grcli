@@ -53,11 +53,11 @@ func TestUnpackReusesVerifyTrustFlags(t *testing.T) {
 	}
 }
 
-// TestUnpack_TamperedCacheEntryIsRefusedAndDropped walks a rewritten cache
-// entry through the real cache read: its own digest checks pass (meta.json was
-// rewritten too), the pin to the verified manifest refuses it, and
+// TestUnpack_StaleCacheEntryIsRefusedAndDropped walks a cache entry whose
+// bytes differ from the verified manifest through the real cache read: the
+// cache's own digest checks pass, the pin to the verified manifest refuses it, and
 // dropCachedPrimary removes it so the next run pulls afresh.
-func TestUnpack_TamperedCacheEntryIsRefusedAndDropped(t *testing.T) {
+func TestUnpack_StaleCacheEntryIsRefusedAndDropped(t *testing.T) {
 	ctx := context.Background()
 	c := tempCache(t)
 	const url = "https://hub.invalid.test"
@@ -71,12 +71,12 @@ func TestUnpack_TamperedCacheEntryIsRefusedAndDropped(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, store.Tag(ctx, desc, desc.Digest.String()))
 
-	tampered := &bundle.Bundle{
+	stale := &bundle.Bundle{
 		Manifest: published.Manifest,
-		Source:   bundle.File{Name: "controls.yaml", Data: []byte("id: evil\n")},
+		Source:   bundle.File{Name: "controls.yaml", Data: []byte("id: other\n")},
 		Etag:     desc.Digest.Hex(),
 	}
-	putBundle(c, hostOf(url), "acme", "controls", "1.0.0", tampered, io.Discard)
+	putBundle(c, hostOf(url), "acme", "controls", "1.0.0", stale, io.Discard)
 
 	v := viper.New()
 	v.Set(flagURL, url)
@@ -85,12 +85,12 @@ func TestUnpack_TamperedCacheEntryIsRefusedAndDropped(t *testing.T) {
 	v.Set(flagCacheEnabled, true)
 	b, _, err := resolveBundle(ctx, v, io.Discard) // offline, so this is the cache hit
 	require.NoError(t, err)
-	require.Equal(t, "id: evil\n", string(b.Source.Data))
+	require.Equal(t, "id: other\n", string(b.Source.Data))
 
 	require.ErrorContains(t, registry.CheckBundle(ctx, store, desc.Digest.String(), b), "content does not match")
 
 	dropCachedPrimary(v, io.Discard)
 	_, found, err := c.Get(hostOf(url), "acme", "controls", "1.0.0")
 	require.NoError(t, err)
-	require.False(t, found, "the tampered entry must be gone")
+	require.False(t, found, "the stale entry must be gone")
 }
