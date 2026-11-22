@@ -78,6 +78,20 @@ func TestPreflight(t *testing.T) {
 		}
 	})
 
+	t.Run("CI with --cosign-key is refused, not ignored", func(t *testing.T) {
+		cosignOnPath(t)
+		t.Setenv("GITHUB_ACTIONS", "true")
+		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "tok")
+		err := Preflight(context.Background(), Options{KeyPath: "/keys/x.key"})
+		if err == nil || !strings.Contains(err.Error(), "--cosign-key") || !strings.Contains(err.Error(), "keyless") {
+			t.Fatalf("want a refusal naming --cosign-key and keyless signing, got %v", err)
+		}
+		_, err = Sign(context.Background(), Options{KeyPath: "/keys/x.key", Reference: "r/x:1"})
+		if err == nil || !strings.Contains(err.Error(), "--cosign-key") || !strings.Contains(err.Error(), "keyless") {
+			t.Fatalf("Sign must refuse the same way, got %v", err)
+		}
+	})
+
 	t.Run("CI without id-token fails closed", func(t *testing.T) {
 		cosignOnPath(t)
 		t.Setenv("GITHUB_ACTIONS", "true")

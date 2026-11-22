@@ -71,7 +71,9 @@ verified and pinned at ingest, and verifies against it — so a consumer needs
 no prior knowledge of the publishing workflow. The identity it trusted, and
 that it came from the hub record, are printed before verification runs.
 This trusts the hub as the identity source; for an independent check, pass
---certificate-identity (or --cosign-key) yourself.
+--certificate-identity (or --cosign-key) yourself. A certificate-oidc-issuer
+set by flag, env or config must match the issuer in the hub record, or verify
+refuses.
 
 Passing --certificate-identity (keyless verification, paired with publish's
 GitHub-Actions OIDC flow) bypasses the hub lookup entirely. The identity is
@@ -119,7 +121,7 @@ Examples:
 	flags.String(flagVersion, "", "artifact version to verify — the metadata.version of the published bundle (required)")
 	flags.String(flagCosignKey, "", "cosign public key file (mutually exclusive with keyless flags)")
 	flags.String(flagCertIdentity, "", "expected signer identity (e.g., a GHA workflow URL)")
-	flags.String(flagCertOIDCIssuer, "", "expected OIDC issuer for keyless verification (default: https://token.actions.githubusercontent.com — override for GitHub Enterprise / other CI)")
+	flags.String(flagCertOIDCIssuer, "", "expected OIDC issuer for keyless verification (default: https://token.actions.githubusercontent.com — override for GitHub Enterprise / other CI); in zero-flag mode a set issuer must match the hub-recorded one")
 
 	return cmd
 }
@@ -130,7 +132,7 @@ func runVerify(cmd *cobra.Command, v *viper.Viper) error {
 	}
 	ctx := cmd.Context()
 
-	policy, err := resolveVerifyPolicy(ctx, v)
+	policy, err := resolveVerifyPolicy(ctx, v, cmd.Flags().Changed(flagCertOIDCIssuer))
 	if err != nil {
 		return err
 	}
@@ -291,7 +293,10 @@ func (p verifyPolicy) identityPolicy() sigverify.IdentityPolicy {
 	}
 }
 
-func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, error) {
+// issuerFromFlag says whether the issuer came from --certificate-oidc-issuer
+// rather than GRCLI_CERTIFICATE_OIDC_ISSUER or config. Only the flag conflicts
+// with --cosign-key: a standing issuer is a keyless setting that key mode ignores.
+func resolveVerifyPolicy(ctx context.Context, v *viper.Viper, issuerFromFlag bool) (verifyPolicy, error) {
 	url := v.GetString(flagURL)
 	repository := v.GetString(flagRepository)
 	version := v.GetString(flagVersion)
@@ -317,17 +322,16 @@ func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, err
 	// --cosign-key detection.
 	keyMode := keyPath != ""
 	keylessMode := identity != ""
-	issuerSet := issuer != ""
 	switch {
-	case keyMode && (keylessMode || issuerSet):
+	case keyMode && (keylessMode || issuerFromFlag):
 		return verifyPolicy{}, errors.New("--cosign-key is mutually exclusive with --certificate-identity / --certificate-oidc-issuer")
-	case issuerSet && !keylessMode:
-		return verifyPolicy{}, errors.New("--certificate-oidc-issuer requires --certificate-identity")
+	case keyMode:
+		issuer = "" // from env or config; key verification does not use it
 	}
-	// With no key and no identity we're in zero-flag mode:
-	// the signer identity comes from the hub's catalog record, not the flags.
-	// (A lone --certificate-oidc-issuer is already rejected above, so this is
-	// exactly "no trust material at all".)
+	issuerSet := issuer != ""
+	// With no key and no identity we're in zero-flag mode: the signer identity
+	// comes from the hub's catalog record, not the flags. An issuer set here
+	// (flag, env or config) must match the record's issuer; see below.
 	hubLookupMode := !keyMode && !keylessMode
 	// Keyless with no explicit issuer defaults to GitHub Actions.
 	// This runs AFTER mode resolution, and cosign still checks issuer == this
@@ -367,6 +371,12 @@ func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, err
 	if hubLookupMode {
 		if err := resolveHubIdentity(ctx, url, repository, &policy); err != nil {
 			return verifyPolicy{}, err
+		}
+		// A configured issuer narrows the hub's identity, never replaces it:
+		// it must name the issuer the hub recorded.
+		if issuerSet && issuer != policy.issuer {
+			return verifyPolicy{}, fmt.Errorf("the hub records issuer %s for %s, but certificate-oidc-issuer is %s (from the flag, GRCLI_CERTIFICATE_OIDC_ISSUER or config); "+
+				"unset it, or pass --certificate-identity to verify against that issuer explicitly", policy.issuer, repository, issuer)
 		}
 	}
 	return policy, nil

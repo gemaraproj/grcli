@@ -13,11 +13,23 @@ change bumps the minor version.
   the served repository, so this release cannot publish to a hub from before
   the staging cutover, and older releases cannot publish to a hub after it
   (their first blob push gets `401 UNAUTHORIZED`).
+- **Breaking:** `publish --cosign-key` (or `COSIGN_KEY`) in GitHub Actions is
+  refused instead of silently ignored, so a job that exports `COSIGN_KEY` and
+  publishes in the same step now fails. Unset it for the publish step. Actions
+  publishes sign keyless with the workflow's identity, which is what the hub
+  records and `verify` checks.
 - The hub client's timeout rises from 60 seconds to 3 minutes, above the
   hub's 120-second catalog sync deadline.
 - A refused push names the staging repository and the namespace you need to
   own, and a refused sync shows the hub's error code and says whether to
   publish again.
+
+### Fixed
+
+- Setting `certificate-oidc-issuer` in config or `GRCLI_CERTIFICATE_OIDC_ISSUER`
+  no longer breaks zero-flag `verify` and `unpack`. They use the hub's signer
+  identity, and the set issuer must match the issuer the hub recorded. Key
+  mode (`--cosign-key`) ignores an issuer from env or config.
 
 ## [0.1.0] - Unreleased
 

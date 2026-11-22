@@ -86,7 +86,7 @@ only; `--dry-run` is **General**.
 | `--version` | `metadata.version` | Written into the packed body's `metadata.version` and used as the tag. |
 | `--repository` | `slugify(author.id)/slugify(id)` | Served repository. The hub rejects a value that disagrees with the metadata (`422 catalog_coordinate_mismatch`). |
 | `--token` | (none) | Hub bearer token. Env: `GRCLI_TOKEN`. In Actions, leave unset. |
-| `--cosign-key` | (none) | cosign private key for key-based signing. Env: `COSIGN_KEY`, cosign's own name for it. Ignored inside GitHub Actions. |
+| `--cosign-key` | (none) | cosign private key for key-based signing. Env: `COSIGN_KEY`, cosign's own name for it. Refused inside GitHub Actions. |
 | `--no-sign` | `false` | Do not sign. |
 | `--dry-run` | `false` | No network. Write an OCI image layout to `--output`. |
 | `--output` | `grcli-out` | Layout directory for `--dry-run`. |
@@ -142,11 +142,13 @@ With `--cosign-key`, cosign's own output appears between the `pushed` and
 | Condition | Mode | Needs |
 |---|---|---|
 | `--no-sign` | skipped | nothing |
+| `GITHUB_ACTIONS=true` and `--cosign-key` set | error: refused | unset `COSIGN_KEY` for the step, or `--no-sign` |
 | `GITHUB_ACTIONS=true` | keyless, in-process | `ACTIONS_ID_TOKEN_REQUEST_URL` and `_TOKEN` (from `id-token: write`) |
 | otherwise, `--cosign-key` set | key, via `cosign sign` | cosign 2.6.0 or later |
 | otherwise | error: `no signing material` | |
 
-Inside GitHub Actions, keyless wins even if `--cosign-key` is set.
+Inside GitHub Actions a key is refused, not ignored: Actions publishes sign keyless
+with the workflow's identity, which is what the hub records and `verify` checks.
 
 ### Hub token resolution
 
@@ -173,7 +175,7 @@ Scope: **Hub protocol** (discovery always; signer lookup in zero-flag mode),
 | `--version` | (required) | The version (tag). |
 | `--url` | `https://hub.grc.store` | Hub, for discovery and the signer lookup. |
 | `--certificate-identity` | (none) | Exact expected certificate subject (SAN). Selects explicit keyless mode. |
-| `--certificate-oidc-issuer` | GitHub Actions issuer, in explicit keyless mode | Expected OIDC issuer. Requires `--certificate-identity`. |
+| `--certificate-oidc-issuer` | GitHub Actions issuer, in explicit keyless mode | Expected OIDC issuer. In zero-flag mode a set issuer (flag, env or config) must match the hub record. The flag conflicts with `--cosign-key`; env or config does not. |
 | `--cosign-key` | (none) | cosign public key. Selects key mode. Exclusive with the two flags above. |
 | (config/env only) `trusted-root` / `GRCLI_TRUSTED_ROOT` | embedded root | Path to a `trusted_root.json`. |
 

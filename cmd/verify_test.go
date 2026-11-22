@@ -75,16 +75,13 @@ func TestVerify_FlagValidation(t *testing.T) {
 			wantSub: "mutually exclusive",
 		},
 		{
-			// issuer without identity (and no key) is an explicit error:
-			// identity is the keyless trigger; a lone issuer has nothing to
-			// bind to. Identity WITHOUT issuer is NOT here — it
-			// now succeeds by defaulting the issuer (see TestResolveVerifyPolicy_URL).
-			name: "issuer-without-identity",
+			name: "key-and-issuer-flag",
 			args: []string{
 				"verify", "--url", "https://hub.example", "--repository", "rep", "--version", "t",
+				"--cosign-key", "k",
 				"--certificate-oidc-issuer", "https://example.com",
 			},
-			wantSub: "--certificate-oidc-issuer requires --certificate-identity",
+			wantSub: "mutually exclusive",
 		},
 	}
 	for _, tc := range cases {
@@ -115,7 +112,7 @@ func TestResolveVerifyPolicy_URL(t *testing.T) {
 		v.Set(flagVersion, "1.0.0")
 		v.Set(flagCosignKey, "/keys/cosign.pub")
 
-		policy, err := resolveVerifyPolicy(context.Background(), v)
+		policy, err := resolveVerifyPolicy(context.Background(), v, false)
 		require.NoError(t, err)
 		require.Equal(t, "discovered.example/team/artifact:1.0.0", policy.reference,
 			"cosign reference must be bare-host/repo:tag; a https:// prefix would cause cosign to reject the reference")
@@ -140,7 +137,7 @@ func TestResolveVerifyPolicy_URL(t *testing.T) {
 		v.Set(flagCertIdentity, "https://github.com/team/repo/.github/workflows/publish.yml@refs/heads/main")
 		// flagCertOIDCIssuer deliberately unset
 
-		policy, err := resolveVerifyPolicy(context.Background(), v)
+		policy, err := resolveVerifyPolicy(context.Background(), v, false)
 		require.NoError(t, err)
 		require.Equal(t, defaultCertOIDCIssuer, policy.issuer,
 			"keyless verify with no --certificate-oidc-issuer must default to the GitHub Actions issuer")
@@ -157,11 +154,30 @@ func TestResolveVerifyPolicy_URL(t *testing.T) {
 		v.Set(flagCertIdentity, "id")
 		v.Set(flagCertOIDCIssuer, "https://gitlab.example.com")
 
-		policy, err := resolveVerifyPolicy(context.Background(), v)
+		policy, err := resolveVerifyPolicy(context.Background(), v, false)
 		require.NoError(t, err)
 		require.Equal(t, "https://gitlab.example.com", policy.issuer,
 			"an explicit --certificate-oidc-issuer must override the GitHub Actions default")
 	})
+}
+
+// TestVerify_StandingIssuerWithKey drives the real command: an issuer from
+// GRCLI_CERTIFICATE_OIDC_ISSUER must not trip the --cosign-key conflict that
+// the same issuer passed as a flag does (TestVerify_FlagValidation).
+func TestVerify_StandingIssuerWithKey(t *testing.T) {
+	isolatedWorkdir(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Every request gets the discovery doc, so the registry-token call
+		// after policy resolution fails here, without leaving the machine.
+		_, _ = w.Write([]byte(`{"registry_url":"http://127.0.0.1:1/","hub_url":"https://hub.example","api_version":"v1"}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("GRCLI_CERTIFICATE_OIDC_ISSUER", "https://token.actions.githubusercontent.com")
+
+	out, err := runRootExpectErr(t, "verify", "--url", srv.URL, "--repository", "team/artifact", "--version", "1.0.0", "--cosign-key", "k")
+	require.Error(t, err, out)
+	require.NotContains(t, err.Error(), "mutually exclusive")
+	require.Contains(t, err.Error(), "registry pull token", "must fail later, after policy resolution")
 }
 
 // TestVerifyPolicy_CosignArgs now covers ONLY key-mode: keyless verification
@@ -284,7 +300,7 @@ func TestResolveVerifyPolicy_HubLookup(t *testing.T) {
 		canonical := "keyless:" + issuer + "#" + workflowPath
 
 		srv := hubLookupServer(t, canonical, nil)
-		policy, err := resolveVerifyPolicy(context.Background(), baseViper(srv.URL))
+		policy, err := resolveVerifyPolicy(context.Background(), baseViper(srv.URL), false)
 		require.NoError(t, err)
 
 		require.Equal(t, issuer, policy.issuer)
@@ -313,9 +329,58 @@ func TestResolveVerifyPolicy_HubLookup(t *testing.T) {
 		require.Equal(t, "keyless identity from hub record: "+canonical+", issuer "+issuer, policy.modeDescription())
 	})
 
+	t.Run("configured issuer works with the hub identity when it matches", func(t *testing.T) {
+		const issuer = "https://token.actions.githubusercontent.com"
+		const workflowPath = "https://github.com/acme/repo/.github/workflows/publish.yml"
+		srv := hubLookupServer(t, "keyless:"+issuer+"#"+workflowPath, nil)
+		t.Setenv("GRCLI_CERTIFICATE_OIDC_ISSUER", issuer)
+		v := baseViper(srv.URL)
+		v.SetEnvPrefix("GRCLI")
+		v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+		v.AutomaticEnv()
+
+		policy, err := resolveVerifyPolicy(context.Background(), v, false)
+		require.NoError(t, err)
+		require.Equal(t, issuer, policy.issuer)
+		require.Equal(t, "^"+regexp.QuoteMeta(workflowPath)+"@", policy.identityRegexp, "still the hub's identity")
+		require.Empty(t, policy.identity)
+	})
+
+	t.Run("configured issuer does not block key mode", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"registry_url":"https://discovered.example/","hub_url":"https://hub.example","api_version":"v1"}`))
+		}))
+		t.Cleanup(srv.Close)
+		t.Setenv("GRCLI_CERTIFICATE_OIDC_ISSUER", "https://token.actions.githubusercontent.com")
+		v := viper.New()
+		v.SetEnvPrefix("GRCLI")
+		v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+		v.AutomaticEnv()
+		v.Set(flagURL, srv.URL)
+		v.Set(flagRepository, "team/artifact")
+		v.Set(flagVersion, "1.0.0")
+		v.Set(flagCosignKey, "/keys/cosign.pub")
+
+		policy, err := resolveVerifyPolicy(context.Background(), v, false)
+		require.NoError(t, err)
+		require.Equal(t, "/keys/cosign.pub", policy.keyPath)
+		require.Empty(t, policy.issuer, "key mode ignores a standing issuer")
+	})
+
+	t.Run("configured issuer that differs from the hub record is refused", func(t *testing.T) {
+		srv := hubLookupServer(t, "keyless:https://token.actions.githubusercontent.com#https://github.com/acme/repo/.github/workflows/publish.yml", nil)
+		v := baseViper(srv.URL)
+		v.Set(flagCertOIDCIssuer, "https://ghe.example/_services/token")
+
+		_, err := resolveVerifyPolicy(context.Background(), v, false)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "the hub records issuer https://token.actions.githubusercontent.com")
+		require.Contains(t, err.Error(), "https://ghe.example/_services/token")
+	})
+
 	t.Run("hub record without a signer identity is a clear, actionable error", func(t *testing.T) {
 		srv := hubLookupServer(t, "", nil)
-		_, err := resolveVerifyPolicy(context.Background(), baseViper(srv.URL))
+		_, err := resolveVerifyPolicy(context.Background(), baseViper(srv.URL), false)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "no recorded signer identity")
 		require.Contains(t, err.Error(), "--cosign-key or --certificate-identity", "the error must point at the explicit-flag escape hatch")
@@ -324,7 +389,7 @@ func TestResolveVerifyPolicy_HubLookup(t *testing.T) {
 	t.Run("malformed hub identity fails loudly", func(t *testing.T) {
 		for _, bad := range []string{"not-a-valid-identity", "keyless:issuer-without-hash"} {
 			srv := hubLookupServer(t, bad, nil)
-			_, err := resolveVerifyPolicy(context.Background(), baseViper(srv.URL))
+			_, err := resolveVerifyPolicy(context.Background(), baseViper(srv.URL), false)
 			require.Error(t, err, "identity %q must be rejected", bad)
 			require.Contains(t, err.Error(), "malformed")
 		}
@@ -332,7 +397,7 @@ func TestResolveVerifyPolicy_HubLookup(t *testing.T) {
 
 	t.Run("unsupported key: scheme is rejected", func(t *testing.T) {
 		srv := hubLookupServer(t, "key:sha256:abc123", nil)
-		_, err := resolveVerifyPolicy(context.Background(), baseViper(srv.URL))
+		_, err := resolveVerifyPolicy(context.Background(), baseViper(srv.URL), false)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "unsupported scheme")
 		require.Contains(t, err.Error(), `"key"`)
@@ -345,7 +410,7 @@ func TestResolveVerifyPolicy_HubLookup(t *testing.T) {
 		v := baseViper(srv.URL)
 		v.Set(flagCertIdentity, "https://github.com/team/repo/.github/workflows/publish.yml@refs/heads/main")
 
-		policy, err := resolveVerifyPolicy(context.Background(), v)
+		policy, err := resolveVerifyPolicy(context.Background(), v, false)
 		require.NoError(t, err)
 		require.Equal(t, 0, called, "the catalog record must not be fetched when the identity is supplied explicitly")
 		require.Equal(t, "https://github.com/team/repo/.github/workflows/publish.yml@refs/heads/main", policy.identity)
@@ -360,7 +425,7 @@ func TestResolveVerifyPolicy_HubLookup(t *testing.T) {
 		v := baseViper(srv.URL)
 		v.Set(flagCosignKey, "/keys/cosign.pub")
 
-		policy, err := resolveVerifyPolicy(context.Background(), v)
+		policy, err := resolveVerifyPolicy(context.Background(), v, false)
 		require.NoError(t, err)
 		require.Equal(t, 0, called, "the catalog record must not be fetched when a key is supplied")
 		require.Equal(t, "/keys/cosign.pub", policy.keyPath)
