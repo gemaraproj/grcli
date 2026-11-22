@@ -242,7 +242,8 @@ func Preflight(ctx context.Context, opts Options) error {
 // Decision tree:
 //
 //	--no-sign            → ModeSkipped, no error
-//	GITHUB_ACTIONS=true   → ModeKeyless, in-process via sigstore-go (error if id-token missing)
+//	GITHUB_ACTIONS=true   → error if KeyPath is set (Preflight), else ModeKeyless,
+//	                        in-process via sigstore-go (error if id-token missing)
 //	KeyPath != ""        → ModeKey, cosign shell-out (error if cosign absent)
 //	otherwise            → error (no signing material)
 //

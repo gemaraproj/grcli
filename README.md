@@ -228,7 +228,7 @@ Keys (env form in parentheses):
   `https://token.actions.githubusercontent.com`; set it only for GitHub
   Enterprise, another CI provider, or an OIDC proxy. Zero-flag `verify` and
   `unpack` still use the hub's signer identity; a set issuer must match the
-  issuer the hub recorded, or they refuse.
+  issuer the hub recorded, or they refuse. `--cosign-key` ignores it.
 - `trusted-root` (`GRCLI_TRUSTED_ROOT`) — path to a `trusted_root.json` that
   overrides the embedded Sigstore public-good trust root for keyless `verify`. For air-gapped deployments or a private Sigstore instance only;
   unset, grcli uses its pinned embedded root.

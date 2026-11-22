@@ -132,7 +132,7 @@ func runVerify(cmd *cobra.Command, v *viper.Viper) error {
 	}
 	ctx := cmd.Context()
 
-	policy, err := resolveVerifyPolicy(ctx, v)
+	policy, err := resolveVerifyPolicy(ctx, v, cmd.Flags().Changed(flagCertOIDCIssuer))
 	if err != nil {
 		return err
 	}
@@ -293,7 +293,10 @@ func (p verifyPolicy) identityPolicy() sigverify.IdentityPolicy {
 	}
 }
 
-func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, error) {
+// issuerFromFlag says whether the issuer came from --certificate-oidc-issuer
+// rather than GRCLI_CERTIFICATE_OIDC_ISSUER or config. Only the flag conflicts
+// with --cosign-key: a standing issuer is a keyless setting that key mode ignores.
+func resolveVerifyPolicy(ctx context.Context, v *viper.Viper, issuerFromFlag bool) (verifyPolicy, error) {
 	url := v.GetString(flagURL)
 	repository := v.GetString(flagRepository)
 	version := v.GetString(flagVersion)
@@ -319,11 +322,13 @@ func resolveVerifyPolicy(ctx context.Context, v *viper.Viper) (verifyPolicy, err
 	// --cosign-key detection.
 	keyMode := keyPath != ""
 	keylessMode := identity != ""
-	issuerSet := issuer != ""
 	switch {
-	case keyMode && (keylessMode || issuerSet):
+	case keyMode && (keylessMode || issuerFromFlag):
 		return verifyPolicy{}, errors.New("--cosign-key is mutually exclusive with --certificate-identity / --certificate-oidc-issuer")
+	case keyMode:
+		issuer = "" // from env or config; key verification does not use it
 	}
+	issuerSet := issuer != ""
 	// With no key and no identity we're in zero-flag mode: the signer identity
 	// comes from the hub's catalog record, not the flags. An issuer set here
 	// (flag, env or config) must match the record's issuer; see below.

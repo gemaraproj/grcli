@@ -86,8 +86,9 @@ func TestPreflight(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "--cosign-key") || !strings.Contains(err.Error(), "keyless") {
 			t.Fatalf("want a refusal naming --cosign-key and keyless signing, got %v", err)
 		}
-		if _, err := Sign(context.Background(), Options{KeyPath: "/keys/x.key", Reference: "r/x:1"}); err == nil {
-			t.Fatal("Sign must refuse the same way")
+		_, err = Sign(context.Background(), Options{KeyPath: "/keys/x.key", Reference: "r/x:1"})
+		if err == nil || !strings.Contains(err.Error(), "--cosign-key") || !strings.Contains(err.Error(), "keyless") {
+			t.Fatalf("Sign must refuse the same way, got %v", err)
 		}
 	})
 

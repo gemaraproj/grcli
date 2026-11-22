@@ -61,7 +61,9 @@ Sigstore signature in-process before writing anything, and fails closed —
 an unsigned, mis-signed, or unverifiable artifact is refused and no files
 are written. This is the same check as 'grcli verify': zero-flag against
 the identity the hub recorded at ingest, or --certificate-identity to
-assert the signer yourself and bypass the hub. Pass --no-verify to write
+assert the signer yourself and bypass the hub. In zero-flag mode a set
+certificate-oidc-issuer (flag, GRCLI_CERTIFICATE_OIDC_ISSUER or config) must
+match the issuer the hub recorded. Pass --no-verify to write
 without verifying (INSECURE). A local --source layout has no registry
 signature to check, so it is always written without verification.
 
@@ -121,7 +123,7 @@ Examples:
 	flags.Bool(flagNoCache, false, "bypass the local artifact cache for this run (primary + references); set cache-enabled: false in config to disable it durably")
 	flags.Bool(flagNoVerify, false, "write without verifying the artifact's signature (INSECURE) — the default verifies and fails closed")
 	flags.String(flagCertIdentity, "", "verify against this exact signer identity instead of the hub-recorded one (bypasses the hub lookup)")
-	flags.String(flagCertOIDCIssuer, "", "expected OIDC issuer for --certificate-identity (default: https://token.actions.githubusercontent.com)")
+	flags.String(flagCertOIDCIssuer, "", "expected OIDC issuer: for --certificate-identity (default: https://token.actions.githubusercontent.com), or, when set, must match the hub-recorded issuer in zero-flag mode")
 
 	// Bind at RunE time, not here — see comment in newPublishCmd.
 	return cmd
@@ -160,7 +162,7 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 	// and the output directory is not created.
 	switch planUnpackVerify(v.GetString(flagSource), v.GetBool(flagNoVerify)) {
 	case unpackVerify:
-		if err := verifyBeforeUnpack(ctx, v, out); err != nil {
+		if err := verifyBeforeUnpack(ctx, v, cmd.Flags().Changed(flagCertOIDCIssuer), out); err != nil {
 			return err
 		}
 	case unpackSkipSource:
@@ -218,8 +220,8 @@ func planUnpackVerify(source string, noVerify bool) unpackVerifyPlan {
 // unpack and `grcli verify` apply identical trust — zero-flag against the
 // hub-recorded identity, or an explicit --certificate-identity the caller
 // asserts (bypassing the hub lookup).
-func verifyBeforeUnpack(ctx context.Context, v *viper.Viper, out io.Writer) error {
-	policy, err := resolveVerifyPolicy(ctx, v)
+func verifyBeforeUnpack(ctx context.Context, v *viper.Viper, issuerFromFlag bool, out io.Writer) error {
+	policy, err := resolveVerifyPolicy(ctx, v, issuerFromFlag)
 	if err != nil {
 		return fmt.Errorf("preparing verification: %w", err)
 	}
