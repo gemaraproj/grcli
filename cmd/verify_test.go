@@ -161,6 +161,25 @@ func TestResolveVerifyPolicy_URL(t *testing.T) {
 	})
 }
 
+// TestVerify_StandingIssuerWithKey drives the real command: an issuer from
+// GRCLI_CERTIFICATE_OIDC_ISSUER must not trip the --cosign-key conflict that
+// the same issuer passed as a flag does (TestVerify_FlagValidation).
+func TestVerify_StandingIssuerWithKey(t *testing.T) {
+	isolatedWorkdir(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Every request gets the discovery doc, so the registry-token call
+		// after policy resolution fails here, without leaving the machine.
+		_, _ = w.Write([]byte(`{"registry_url":"http://127.0.0.1:1/","hub_url":"https://hub.example","api_version":"v1"}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("GRCLI_CERTIFICATE_OIDC_ISSUER", "https://token.actions.githubusercontent.com")
+
+	out, err := runRootExpectErr(t, "verify", "--url", srv.URL, "--repository", "team/artifact", "--version", "1.0.0", "--cosign-key", "k")
+	require.Error(t, err, out)
+	require.NotContains(t, err.Error(), "mutually exclusive")
+	require.Contains(t, err.Error(), "registry pull token", "must fail later, after policy resolution")
+}
+
 // TestVerifyPolicy_CosignArgs now covers ONLY key-mode: keyless verification
 // moved in-process, so cosign is the sole remaining shell-out and it
 // only ever runs with --key. The keyless trust material is carried by

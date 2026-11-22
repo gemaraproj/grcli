@@ -121,7 +121,7 @@ Examples:
 	flags.String(flagVersion, "", "artifact version to verify — the metadata.version of the published bundle (required)")
 	flags.String(flagCosignKey, "", "cosign public key file (mutually exclusive with keyless flags)")
 	flags.String(flagCertIdentity, "", "expected signer identity (e.g., a GHA workflow URL)")
-	flags.String(flagCertOIDCIssuer, "", "expected OIDC issuer for keyless verification (default: https://token.actions.githubusercontent.com — override for GitHub Enterprise / other CI)")
+	flags.String(flagCertOIDCIssuer, "", "expected OIDC issuer for keyless verification (default: https://token.actions.githubusercontent.com — override for GitHub Enterprise / other CI); in zero-flag mode a set issuer must match the hub-recorded one")
 
 	return cmd
 }
