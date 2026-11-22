@@ -34,28 +34,12 @@ The repository still carries tags from before the history was reset on
 as one of them, so the next minor release cannot use that name without
 first deleting the old tag.
 
-### `certificate-oidc-issuer` in config breaks zero-flag verify and unpack
-
-Setting `certificate-oidc-issuer` in the config file (or
-`GRCLI_CERTIFICATE_OIDC_ISSUER`), for GitHub Enterprise or another CI
-provider, breaks the zero-flag modes: every `grcli verify`
-and every `grcli unpack` without `--certificate-identity` fails with
-`--certificate-oidc-issuer requires --certificate-identity`, because the
-mode check cannot tell a config value from a flag (`cmd/verify.go`,
-`resolveVerifyPolicy`). `unpack` downloads and caches the bundle before it
-fails.
-
 ### `--repository` cannot change the coordinate
 
 A `--repository` that differs from the coordinate derived from the file
 pushes to staging and is then refused at sync with
 `422 catalog_coordinate_mismatch`, because the hub authorizes the namespace
 it derives from the body.
-
-### `--cosign-key` is silently ignored in GitHub Actions
-
-`sign.Sign` checks `GITHUB_ACTIONS=true` first and signs keylessly whatever
-`--cosign-key` says (`internal/sign/sign.go`). No warning is printed.
 
 ### Help text that is out of date
 

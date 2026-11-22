@@ -34,7 +34,7 @@ them). The keys that mean something on their own:
 |---|---|---|---|
 | `url` | `GRCLI_URL` | `https://hub.grc.store` | Hub base URL for every command. |
 | `cache-enabled` | `GRCLI_CACHE_ENABLED` | `true` | `false` acts like `--no-cache` on every run. Flat on purpose: a nested `cache.enabled` would be hidden by `GRCLI_CACHE`. |
-| `certificate-oidc-issuer` | `GRCLI_CERTIFICATE_OIDC_ISSUER` | GitHub Actions issuer | Issuer for explicit keyless verify. Setting it without an identity makes `verify` and `unpack` fail (see [known gaps](../explanation/known-gaps.md#certificate-oidc-issuer-in-config-breaks-zero-flag-verify-and-unpack)). |
+| `certificate-oidc-issuer` | `GRCLI_CERTIFICATE_OIDC_ISSUER` | GitHub Actions issuer | Issuer for explicit keyless verify. In zero-flag `verify` and `unpack` a set issuer must match the issuer the hub recorded. Key mode ignores it here; only the `--certificate-oidc-issuer` flag conflicts with `--cosign-key`. |
 | `trusted-root` | `GRCLI_TRUSTED_ROOT` | embedded | Path to a Sigstore `trusted_root.json` for verifying. Has no flag. |
 | `gemara-version` | `GRCLI_GEMARA_VERSION` | per file | Schema release for `validate`. |
 | `spec` | `GRCLI_SPEC` (or `GRCLI_GEMARA_SPEC_DIR`) | none | Local Gemara CUE module for `validate`. |

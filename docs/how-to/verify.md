@@ -60,7 +60,8 @@ content you know to be unsigned.
 | `has no signature attached in the registry` | Published unsigned, or signed by a grcli older than the Sigstore bundle format. Re-publish. |
 | `hub has no recorded signer identity` | The hub never verified a signature for this coordinate. Pass `--certificate-identity` or `--cosign-key`. |
 | `signature verification failed: … certificate identity …` | Signed, but not by the identity you (or the hub) named. |
-| `--certificate-oidc-issuer requires --certificate-identity` | An issuer on its own means nothing; add the identity. |
+| `the hub records issuer … but certificate-oidc-issuer is …` | Zero-flag mode: the issuer you set (flag, `GRCLI_CERTIFICATE_OIDC_ISSUER` or config) differs from the hub's record. Unset it, or pass `--certificate-identity`. |
+| `--cosign-key is mutually exclusive with …` | `--cosign-key` was passed with `--certificate-identity` or the `--certificate-oidc-issuer` flag. Pick one mode. |
 
 ## Use a private Sigstore
 
