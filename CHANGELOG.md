@@ -18,6 +18,10 @@ change bumps the minor version.
 - A refused push names the staging repository and the namespace you need to
   own, and a refused sync shows the hub's error code and says whether to
   publish again.
+- A verified `unpack` writes only content that matches the manifest digest
+  it verified: each file must match its layer digest and `bundle.json` comes
+  from the digest-checked config. Content that does not match is refused and
+  its cache entry is dropped, so the next run pulls again.
 
 ## [0.1.0] - Unreleased
 

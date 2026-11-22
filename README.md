@@ -204,7 +204,9 @@ Remote (`--url`) fetches are served from an on-disk cache: the first pull of a
 given `namespace/id/version` is stored (the whole bundle — files + manifest),
 and later `unpack`/`cat` of the same coordinate — or references to it — are
 served from the cache with **no network at all**. grc.store tags are immutable,
-so a cache hit can never be stale. The cache lives at `$GRCLI_CACHE` (default
+so a cached version is expected to stay current; a verified `unpack` still
+checks a hit against the signed manifest digest and drops an entry that does
+not match. The cache lives at `$GRCLI_CACHE` (default
 `os.UserCacheDir()/grcli`) and grows without bound (no GC yet). Note: a default
 `unpack` still contacts the hub/registry to *verify* the signature even on a
 content cache hit; `--no-verify` restores a fully offline cache hit.

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/gemaraproj/go-gemara/bundle"
 	godigest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/revanite-io/grc-store-protocol/mediatype"
@@ -161,4 +162,177 @@ func TestDiscoverSignatureBundle_MalformedReferrerErrors(t *testing.T) {
 	_, err := discoverSignatureBundle(context.Background(), store, subject)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "carries no")
+}
+
+// publishTo packs body into store under tag 1.0.0 and also tags it by digest,
+// so the memory store resolves a digest reference the way a registry does.
+func publishTo(t *testing.T, store *memory.Store, body string) ocispec.Descriptor {
+	t.Helper()
+	ctx := context.Background()
+	desc, _, err := pack(ctx, store, "1.0.0", PackInput{Filename: "controls.yaml", ArtifactType: "ControlCatalog", Body: []byte(body)})
+	require.NoError(t, err)
+	require.NoError(t, store.Tag(ctx, desc, desc.Digest.String()))
+	return desc
+}
+
+// TestCheckBundle pins unpacked content to the digest a signature was verified
+// against: matching content passes, and content from anywhere else fails.
+func TestCheckBundle(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("matching content passes and takes the verified config", func(t *testing.T) {
+		store := memory.New()
+		desc := publishTo(t, store, "id: a\n")
+		b, err := bundle.Unpack(ctx, store, "1.0.0")
+		require.NoError(t, err)
+		b.Manifest.GemaraVersion = "other" // a cached bundle.json is not trusted
+		b.Etag = "whatever"
+
+		require.NoError(t, CheckBundle(ctx, store, desc.Digest.String(), b))
+		require.Equal(t, desc.Digest.Hex(), b.Etag)
+		require.Equal(t, "1.0", b.Manifest.BundleVersion)
+		require.Empty(t, b.Manifest.GemaraVersion)
+	})
+
+	t.Run("cache entry with other bytes fails", func(t *testing.T) {
+		store := memory.New()
+		desc := publishTo(t, store, "id: a\n")
+		// Right name and Etag, other bytes.
+		b := &bundle.Bundle{
+			Source: bundle.File{Name: "controls.yaml", Data: []byte("id: other\n")},
+			Etag:   desc.Digest.Hex(),
+		}
+		err := CheckBundle(ctx, store, desc.Digest.String(), b)
+		require.ErrorIs(t, err, ErrContentMismatch)
+	})
+
+	t.Run("renamed file fails", func(t *testing.T) {
+		store := memory.New()
+		desc := publishTo(t, store, "id: a\n")
+		b := &bundle.Bundle{Source: bundle.File{Name: "../x.yaml", Data: []byte("id: a\n")}}
+		require.ErrorIs(t, CheckBundle(ctx, store, desc.Digest.String(), b), ErrContentMismatch)
+	})
+
+	t.Run("tag moved between pull and verify fails", func(t *testing.T) {
+		store := memory.New()
+		publishTo(t, store, "id: a\n")
+		pulled, err := bundle.Unpack(ctx, store, "1.0.0") // pulled while the tag named a
+		require.NoError(t, err)
+		moved := publishTo(t, store, "id: b\n") // tag now names b; the signature check sees b
+
+		err = CheckBundle(ctx, store, moved.Digest.String(), pulled)
+		require.ErrorIs(t, err, ErrContentMismatch)
+	})
+
+	t.Run("extra file fails", func(t *testing.T) {
+		store := memory.New()
+		desc := publishTo(t, store, "id: a\n")
+		b, err := bundle.Unpack(ctx, store, "1.0.0")
+		require.NoError(t, err)
+		b.Imports = append(b.Imports, bundle.File{Name: "extra.yaml", Data: []byte("x")})
+		require.ErrorIs(t, CheckBundle(ctx, store, desc.Digest.String(), b), ErrContentMismatch)
+	})
+
+	t.Run("imports are matched in order", func(t *testing.T) {
+		store := memory.New()
+		src := &bundle.Bundle{
+			Manifest: bundle.Manifest{BundleVersion: "1.0"},
+			Source:   bundle.File{Name: "controls.yaml", Data: []byte("id: a\n")},
+			Imports: []bundle.File{
+				{Name: "one.yaml", Data: []byte("id: one\n")},
+				{Name: "two.yaml", Data: []byte("id: two\n")},
+			},
+		}
+		desc, err := bundle.Pack(ctx, store, src)
+		require.NoError(t, err)
+		require.NoError(t, store.Tag(ctx, desc, desc.Digest.String()))
+
+		b, err := bundle.Unpack(ctx, store, desc.Digest.String())
+		require.NoError(t, err)
+		require.Len(t, b.Imports, 2)
+		require.NoError(t, CheckBundle(ctx, store, desc.Digest.String(), b))
+
+		b.Imports[1].Data = []byte("id: other\n")
+		require.ErrorIs(t, CheckBundle(ctx, store, desc.Digest.String(), b), ErrContentMismatch)
+
+		b.Imports = b.Imports[:1]
+		require.ErrorIs(t, CheckBundle(ctx, store, desc.Digest.String(), b), ErrContentMismatch)
+	})
+
+	t.Run("malformed or unknown digest is not a content mismatch", func(t *testing.T) {
+		store := memory.New()
+		publishTo(t, store, "id: a\n")
+		b := &bundle.Bundle{Source: bundle.File{Name: "controls.yaml", Data: []byte("id: a\n")}}
+		err := CheckBundle(ctx, store, "not-a-digest", b)
+		require.Error(t, err)
+		require.NotErrorIs(t, err, ErrContentMismatch)
+		err = CheckBundle(ctx, store, godigest.FromString("absent").String(), b)
+		require.Error(t, err)
+		require.NotErrorIs(t, err, ErrContentMismatch)
+	})
+
+	t.Run("non-bundle config leaves an empty bundle manifest", func(t *testing.T) {
+		store := memory.New()
+		body := []byte("id: a\n")
+		layer := pushBlob(t, store, bundle.MediaTypeArtifact, body)
+		layer.Annotations = map[string]string{ocispec.AnnotationTitle: "controls.yaml"}
+		config := pushBlob(t, store, "application/vnd.example.other+json", []byte(`{"bundle-version":"9"}`))
+		desc := pushManifest(t, store, ocispec.Manifest{Config: config, Layers: []ocispec.Descriptor{layer}})
+		require.NoError(t, store.Tag(ctx, desc, desc.Digest.String()))
+
+		b := &bundle.Bundle{
+			Manifest: bundle.Manifest{BundleVersion: "cached"},
+			Source:   bundle.File{Name: "controls.yaml", Data: body},
+		}
+		require.NoError(t, CheckBundle(ctx, store, desc.Digest.String(), b))
+		require.True(t, b.Manifest.Empty(), "only a digest-checked bundle config may fill bundle.json")
+	})
+
+	// manifestWith pushes a manifest of hand-built artifact layers, tagged by digest.
+	manifestWith := func(t *testing.T, store *memory.Store, layers ...ocispec.Descriptor) string {
+		t.Helper()
+		config := pushBlob(t, store, bundle.MediaTypeManifest, []byte(`{}`))
+		desc := pushManifest(t, store, ocispec.Manifest{Config: config, Layers: layers})
+		require.NoError(t, store.Tag(ctx, desc, desc.Digest.String()))
+		return desc.Digest.String()
+	}
+	layer := func(t *testing.T, store *memory.Store, name, role string, data []byte) ocispec.Descriptor {
+		t.Helper()
+		l := pushBlob(t, store, bundle.MediaTypeArtifact, data)
+		l.Annotations = map[string]string{ocispec.AnnotationTitle: name}
+		if role != "" {
+			l.Annotations[annotationRole] = role
+		}
+		return l
+	}
+
+	t.Run("two source layers fail", func(t *testing.T) {
+		store := memory.New()
+		d := manifestWith(t, store,
+			layer(t, store, "a.yaml", "", []byte("a")),
+			layer(t, store, "b.yaml", "", []byte("b")))
+		b := &bundle.Bundle{Source: bundle.File{Name: "a.yaml", Data: []byte("a")}}
+		require.ErrorIs(t, CheckBundle(ctx, store, d, b), ErrContentMismatch)
+	})
+
+	t.Run("source the manifest lacks fails", func(t *testing.T) {
+		store := memory.New()
+		d := manifestWith(t, store, layer(t, store, "i.yaml", roleImport, []byte("i")))
+		b := &bundle.Bundle{
+			Source:  bundle.File{Name: "a.yaml", Data: []byte("a")},
+			Imports: []bundle.File{{Name: "i.yaml", Data: []byte("i")}},
+		}
+		require.ErrorIs(t, CheckBundle(ctx, store, d, b), ErrContentMismatch)
+	})
+
+	t.Run("invalid layer digest is not a content mismatch", func(t *testing.T) {
+		store := memory.New()
+		bad := layer(t, store, "a.yaml", "", []byte("a"))
+		bad.Digest = "sha256:short"
+		d := manifestWith(t, store, bad)
+		b := &bundle.Bundle{Source: bundle.File{Name: "a.yaml", Data: []byte("a")}}
+		err := CheckBundle(ctx, store, d, b)
+		require.Error(t, err)
+		require.NotErrorIs(t, err, ErrContentMismatch)
+	})
 }

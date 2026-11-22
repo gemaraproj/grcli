@@ -17,6 +17,7 @@ import (
 	"github.com/gemaraproj/go-gemara/bundle"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"oras.land/oras-go/v2"
 
 	"github.com/gemaraproj/grcli/internal/cache"
 	"github.com/gemaraproj/grcli/internal/hub"
@@ -62,13 +63,17 @@ an unsigned, mis-signed, or unverifiable artifact is refused and no files
 are written. This is the same check as 'grcli verify': zero-flag against
 the identity the hub recorded at ingest, or --certificate-identity to
 assert the signer yourself and bypass the hub. Pass --no-verify to write
-without verifying (INSECURE). A local --source layout has no registry
-signature to check, so it is always written without verification.
+without verifying (INSECURE). The files and bundle.json written are
+checked against the manifest digest the signature covers; content that
+does not match is refused and dropped from the cache. A local --source
+layout has no registry signature to check, so it is always written
+without verification.
 
 Caching: a remote (--url) fetch is served from a global on-disk
 cache when the same namespace/id/version has been fetched before — a cache
 hit for the artifact bytes needs no network. grc.store tags are immutable,
-so a hit can never be stale. (Best-effort exception: resolving references
+so a cached version is expected to stay current; a verified unpack still
+checks it against the signed digest. (Best-effort exception: resolving references
 makes short-deadline hub lookups for LICENSE METADATA only — the primary's
 license baseline, and a one-time lookup for any cached reference whose
 license was never confirmed; failures are reported and never block.) Set
@@ -160,7 +165,7 @@ func runUnpack(cmd *cobra.Command, v *viper.Viper) error {
 	// and the output directory is not created.
 	switch planUnpackVerify(v.GetString(flagSource), v.GetBool(flagNoVerify)) {
 	case unpackVerify:
-		if err := verifyBeforeUnpack(ctx, v, out); err != nil {
+		if err := verifyBeforeUnpack(ctx, v, unpacked, out); err != nil {
 			return err
 		}
 	case unpackSkipSource:
@@ -218,7 +223,12 @@ func planUnpackVerify(source string, noVerify bool) unpackVerifyPlan {
 // unpack and `grcli verify` apply identical trust — zero-flag against the
 // hub-recorded identity, or an explicit --certificate-identity the caller
 // asserts (bypassing the hub lookup).
-func verifyBeforeUnpack(ctx context.Context, v *viper.Viper, out io.Writer) error {
+//
+// The signature covers the manifest digest the tag resolves to now, not
+// necessarily the bytes in b (a cache hit, or a pull from before the tag
+// moved), so b is then pinned to that digest. A mismatch refuses the unpack and
+// drops the cached entry so the next run pulls afresh.
+func verifyBeforeUnpack(ctx context.Context, v *viper.Viper, b *bundle.Bundle, out io.Writer) error {
 	policy, err := resolveVerifyPolicy(ctx, v)
 	if err != nil {
 		return fmt.Errorf("preparing verification: %w", err)
@@ -246,8 +256,47 @@ func verifyBeforeUnpack(ctx context.Context, v *viper.Viper, out io.Writer) erro
 	if err != nil {
 		return fmt.Errorf("signature verification failed — refusing to unpack: %w", err)
 	}
+	target, err := registry.RemoteTarget(policy.registryHost, policy.repository)
+	if err != nil {
+		return err
+	}
+	if err := pinVerified(ctx, v, target, artifactDigest, b, out); err != nil {
+		return err
+	}
 	fmt.Fprintf(out, "verified: %s\n", res.Identity)
 	return nil
+}
+
+// pinVerified pins b to the verified manifest digest. Content that does not
+// match also drops the cached entry; a registry or transport error leaves it.
+func pinVerified(ctx context.Context, v *viper.Viper, target oras.ReadOnlyTarget, manifestDigest string, b *bundle.Bundle, out io.Writer) error {
+	err := registry.CheckBundle(ctx, target, manifestDigest, b)
+	if errors.Is(err, registry.ErrContentMismatch) {
+		dropCachedPrimary(v, out)
+		return fmt.Errorf("refusing to unpack: %w (any cached copy was dropped; run again to pull afresh)", err)
+	}
+	if err != nil {
+		return fmt.Errorf("checking content against the verified digest: %w", err)
+	}
+	return nil
+}
+
+// dropCachedPrimary removes the primary artifact's cache entry, at the
+// coordinate resolveBundle reads it from, under the same conditions. Failure
+// is reported, not fatal.
+func dropCachedPrimary(v *viper.Viper, diag io.Writer) {
+	host := hostOf(v.GetString(flagURL))
+	ns, id := splitRepository(v.GetString(flagRepository))
+	if !cachingEnabled(v) || host == "" || ns == "" || id == "" {
+		return
+	}
+	c, err := cache.Open()
+	if err == nil {
+		err = c.Delete(host, ns, id, v.GetString(flagVersion))
+	}
+	if err != nil {
+		fmt.Fprintf(diag, "  ! could not drop the cached copy: %v\n", err)
+	}
 }
 
 // referenceMode reads the --with-references / --with-imports flags.

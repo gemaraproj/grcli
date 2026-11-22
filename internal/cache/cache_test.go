@@ -210,3 +210,19 @@ func TestSanitizeBlocksTraversal(t *testing.T) {
 		t.Errorf("entry dir %q escaped cache root %q (rel %q)", dir, c.Root(), rel)
 	}
 }
+
+func TestDelete(t *testing.T) {
+	c := openTemp(t)
+	if err := c.Put("hub.grc.store", "acme", "x", "1.0.0", Entry{Files: []File{{Name: "a.yaml", Data: []byte("a")}}}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := c.Delete("hub.grc.store", "acme", "x", "1.0.0"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, found, err := c.Get("hub.grc.store", "acme", "x", "1.0.0"); err != nil || found {
+		t.Fatalf("after Delete: found=%v err=%v", found, err)
+	}
+	if err := c.Delete("hub.grc.store", "acme", "x", "1.0.0"); err != nil {
+		t.Fatalf("Delete of a missing entry: %v", err)
+	}
+}

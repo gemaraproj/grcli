@@ -164,10 +164,11 @@ decision still to be made.
 **Decision.** `cat` streams the artifact to stdout. `cat` and `unpack` share
 a disk cache of decoded bundles keyed by hub host, namespace, id and version.
 
-**Why.** Published versions never change, so a cached copy is never stale
-and repeated reads need no network. The cache holds the decoded bundle, not
-the raw OCI layout, so it serves both commands; the cost is that the
-signature is not cached, so `unpack` still goes online to verify.
+**Why.** Published versions never change, so repeated reads need no network.
+The cache holds the decoded bundle, not the raw OCI layout, so it serves both
+commands; the cost is that the signature is not cached, so `unpack` still goes
+online to verify, and then checks the cached content against the manifest
+digest it verified before writing it.
 
 ## One config file, and no per-project config
 
