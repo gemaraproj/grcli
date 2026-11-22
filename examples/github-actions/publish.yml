@@ -40,6 +40,8 @@ jobs:
       # No token needed (the package is public). Pin to a released tag.
       # v2: https://github.com/oras-project/setup-oras/releases/tag/v2.0.0
       - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
+      # v0.1.0 predates staging and cannot publish to a hub past the staging
+      # cutover; pin a release that pushes to staging once one is cut.
       - name: Install grcli
         run: |
           oras pull ghcr.io/gemaraproj/grcli:v0.1.0 --platform linux/amd64

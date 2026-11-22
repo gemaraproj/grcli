@@ -286,4 +286,7 @@ func TestSync_OwnTimeout(t *testing.T) {
 	if _, err := c.Sync(context.Background(), "a/b", "1.0.0"); err != nil {
 		t.Fatalf("sync must not use the general timeout: %v", err)
 	}
+	if c.HTTP.Timeout != 50*time.Millisecond {
+		t.Fatalf("Sync changed the shared client's timeout to %s", c.HTTP.Timeout)
+	}
 }

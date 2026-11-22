@@ -276,9 +276,9 @@ func (c *Client) GetVersionBody(ctx context.Context, namespace, catalogID, versi
 	}
 }
 
-// Sync calls POST /v1/bundles/sync. The hub fetches the bundle from
-// the registry server-side using its zot connection, so the call
-// returns quickly without re-uploading any bytes from this client.
+// Sync calls POST /v1/bundles/sync. The hub fetches the bundle from the
+// registry itself, so the call uploads no bytes, but it can take up to the
+// hub's sync deadline to answer; hence its own timeout.
 func (c *Client) Sync(ctx context.Context, repository, tag string) (*SyncResponse, error) {
 	if c.BaseURL == "" {
 		return nil, errors.New("hub base URL is required")

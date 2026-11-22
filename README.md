@@ -140,7 +140,7 @@ signature to the staging repository `staging/<namespace>/<name>`, then calls
 `POST /v1/bundles/sync` naming `<namespace>/<name>`. The hub checks the staged
 bundle and copies an accepted one into `<namespace>/<name>`; nobody pushes a
 served repository directly. The hub deletes the staged upload
-once it decides, and staging removes anything left there after about 24 hours,
+once it decides, and staging removes anything left there after a while,
 so a failed publish is fixed by running `grcli publish` again. There is no
 fallback: a hub from before the staging cutover gives no push grant on
 `staging/...`, and the push fails with `401` naming the staging repository.
