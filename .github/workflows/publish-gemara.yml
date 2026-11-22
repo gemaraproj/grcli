@@ -37,6 +37,7 @@
 #       with:
 #         files: controls.yaml
 #         license: Apache-2.0
+#         grcli-version: vX.Y.Z  # a release that pushes to staging (see above)
 
 name: Publish Gemara artifact
 

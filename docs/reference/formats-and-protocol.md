@@ -49,7 +49,7 @@ The type also carries `ui_url` and settings flags (`private_only`,
 | Staging | `staging/<ns>/<id>` (`staging.Repository`) | the publisher, with a push token |
 
 The namespace `staging` is reserved. Staged uploads are deleted by the hub
-after it decides, and by the registry after about 24 hours.
+after it decides, and by the registry after a while.
 
 ## The bundle
 

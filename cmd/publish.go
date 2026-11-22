@@ -217,7 +217,13 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 		return nil
 	}
 
-	return signAndNotify(ctx, v, signContext{
+	return signAndNotify(ctx, v, newSignContext(target, result))
+}
+
+// newSignContext puts the signature next to the bundle in the staging
+// repository; the sync names the served one.
+func newSignContext(target publishTarget, result *registry.PushResult) signContext {
+	return signContext{
 		repository:     target.pushRepo,
 		served:         target.repository,
 		tag:            target.tag,
@@ -225,7 +231,7 @@ func runPublish(cmd *cobra.Command, v *viper.Viper, positional []string) error {
 		registryHost:   target.registryHost,
 		manifestDigest: result.ManifestDigest,
 		plainHTTP:      strings.HasPrefix(target.registryHost, "http://"),
-	})
+	}
 }
 
 // signContext carries the push coordinates the sign + notify step needs.

@@ -5,15 +5,18 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/gemaraproj/grc-store-clientkit/auth"
+	ggcrregistry "github.com/google/go-containerregistry/pkg/registry"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 	"oras.land/oras-go/v2/registry/remote/errcode"
@@ -99,7 +102,7 @@ func TestResolveTarget(t *testing.T) {
 			name:       "repository-in-staging-refused",
 			flags:      map[string]any{flagURL: srv.URL, flagRepository: "staging/my-team/my-policy"},
 			loaded:     loadedFull,
-			wantErrSub: "is not a namespace you can publish to",
+			wantErrSub: `repository "staging/my-team/my-policy" must be`,
 		},
 		{
 			name:       "single-segment-repository-refused",
@@ -340,4 +343,118 @@ func TestPushError(t *testing.T) {
 	}
 	err := pushError(target, errors.New("connection refused"))
 	require.Equal(t, "push to staging/acme/ctl: connection refused", err.Error())
+}
+
+// stagingFixture is a fake hub plus an in-memory registry for a real publish.
+// With refuse set, the registry answers every write with 401, as a registry
+// does when the token grants no push on the staging repository.
+type stagingFixture struct {
+	hubURL      string
+	mu          sync.Mutex
+	pushedPaths []string
+	tokenScope  string
+	syncCalls   int
+	syncRepo    string
+}
+
+func newStagingFixture(t *testing.T, refuse bool) *stagingFixture {
+	t.Helper()
+	t.Setenv("GRCLI_REGISTRY_TOKEN", "") // ensureRegistryToken exports one; restore after
+	t.Setenv("GRCLI_REGISTRY_USERNAME", "")
+	t.Setenv("GRCLI_REGISTRY_PASSWORD", "")
+	f := &stagingFixture{}
+	reg := ggcrregistry.New()
+	regSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut || r.Method == http.MethodPost || r.Method == http.MethodPatch {
+			f.mu.Lock()
+			f.pushedPaths = append(f.pushedPaths, r.URL.Path)
+			f.mu.Unlock()
+			if refuse {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"errors":[{"code":"UNAUTHORIZED","message":"authentication required"}]}`))
+				return
+			}
+		}
+		reg.ServeHTTP(w, r)
+	}))
+	t.Cleanup(regSrv.Close)
+	hubSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		switch {
+		case r.URL.Path == "/.well-known/grc-store-configuration":
+			fmt.Fprintf(w, `{"registry_url":%q,"hub_url":"http://hub","api_version":"v1"}`, regSrv.URL)
+		case r.URL.Path == "/v2/token":
+			f.tokenScope = r.URL.Query().Get("scope")
+			_, _ = w.Write([]byte(`{"token":"reg-token"}`))
+		case strings.HasPrefix(r.URL.Path, "/v1/catalogs/"):
+			w.WriteHeader(http.StatusNotFound)
+		case r.URL.Path == "/v1/bundles/sync":
+			f.syncCalls++
+			var req struct{ Repository, Tag string }
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("decoding sync request: %v", err)
+			}
+			f.syncRepo = req.Repository
+			fmt.Fprintf(w, `{"repository":%q,"tag":%q}`, req.Repository, req.Tag)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(hubSrv.Close)
+	f.hubURL = hubSrv.URL
+	return f
+}
+
+// TestPublish_StagingWiring runs a real publish against a fake hub and an
+// in-memory registry: the push token is scoped to the staging repository, the
+// bundle lands there and nowhere else, and the sync names the served one.
+func TestPublish_StagingWiring(t *testing.T) {
+	workdir := isolatedWorkdir(t)
+	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
+	f := newStagingFixture(t, false)
+
+	runRoot(t, "publish", "-f", input, "--url", f.hubURL, "--token", "hub-token",
+		"--repository", "test-team/roundtrip-policy", "--license", "Apache-2.0", "--no-sign")
+
+	require.Equal(t, "repository:staging/test-team/roundtrip-policy:pull,push", f.tokenScope)
+	require.NotEmpty(t, f.pushedPaths)
+	for _, p := range f.pushedPaths {
+		require.True(t, strings.HasPrefix(p, "/v2/staging/test-team/roundtrip-policy/"), "push outside staging: %s", p)
+	}
+	require.Equal(t, 1, f.syncCalls)
+	require.Equal(t, "test-team/roundtrip-policy", f.syncRepo)
+}
+
+// TestPublish_StagingPushRefused checks that a registry 401 on the real push
+// path reaches the user as the staging hint, and that nothing is synced.
+func TestPublish_StagingPushRefused(t *testing.T) {
+	workdir := isolatedWorkdir(t)
+	input := writeTempFile(t, workdir, "policy.yaml", policyYAML)
+	f := newStagingFixture(t, true)
+
+	_, err := runRootExpectErr(t, "publish", "-f", input, "--url", f.hubURL, "--token", "hub-token",
+		"--repository", "test-team/roundtrip-policy", "--license", "Apache-2.0", "--no-sign")
+	require.Error(t, err)
+	for _, want := range []string{"staging repository staging/test-team/roundtrip-policy", `"test-team"`, "(401)"} {
+		require.ErrorContains(t, err, want)
+	}
+	require.Zero(t, f.syncCalls, "a refused push must not sync")
+}
+
+// TestNewSignContext checks that the signature goes to the staging
+// repository with the bundle, while the sync names the served one.
+func TestNewSignContext(t *testing.T) {
+	sc := newSignContext(
+		publishTarget{registryHost: "http://reg", repository: "acme/ctl", pushRepo: "staging/acme/ctl", tag: "1.0.0"},
+		&registry.PushResult{Reference: "reg/staging/acme/ctl:1.0.0", ManifestDigest: "sha256:abc"})
+	require.Equal(t, signContext{
+		repository:     "staging/acme/ctl",
+		served:         "acme/ctl",
+		tag:            "1.0.0",
+		reference:      "reg/staging/acme/ctl:1.0.0",
+		registryHost:   "http://reg",
+		manifestDigest: "sha256:abc",
+		plainHTTP:      true,
+	}, sc)
 }

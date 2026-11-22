@@ -37,10 +37,13 @@ type Client struct {
 	HTTP    *http.Client
 }
 
-// requestTimeout bounds every hub call. It sits above catalog sync's
+// requestTimeout bounds every hub call but the sync.
+const requestTimeout = 60 * time.Second
+
+// syncTimeout bounds the sync call alone. It sits above catalog sync's
 // 120-second write deadline on the hub, so a slow sync ends with the hub's
 // answer rather than a client timeout.
-const requestTimeout = 3 * time.Minute
+const syncTimeout = 3 * time.Minute
 
 // New returns a Client with sensible defaults.
 func New(baseURL, token string) *Client {
@@ -273,9 +276,9 @@ func (c *Client) GetVersionBody(ctx context.Context, namespace, catalogID, versi
 	}
 }
 
-// Sync calls POST /v1/bundles/sync. The hub fetches the bundle from
-// the registry server-side using its zot connection, so the call
-// returns quickly without re-uploading any bytes from this client.
+// Sync calls POST /v1/bundles/sync. The hub fetches the bundle from the
+// registry itself, so the call uploads no bytes, but it can take up to the
+// hub's sync deadline to answer; hence its own timeout.
 func (c *Client) Sync(ctx context.Context, repository, tag string) (*SyncResponse, error) {
 	if c.BaseURL == "" {
 		return nil, errors.New("hub base URL is required")
@@ -296,7 +299,9 @@ func (c *Client) Sync(ctx context.Context, repository, tag string) (*SyncRespons
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 
-	resp, err := c.HTTP.Do(req)
+	hc := *c.HTTP
+	hc.Timeout = syncTimeout
+	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +362,7 @@ func (e *SyncError) hint() string {
 	case e.Status == http.StatusUnauthorized:
 		return "Your hub login is missing or expired: run grcli login (in CI, check the job has id-token: write)."
 	case e.Code == "fetch_failed":
-		return fmt.Sprintf("The hub could not read the bundle from %s: the push did not finish, or it was pushed more than 24 hours ago and staging removed it. Run grcli publish again.", stagingRepo)
+		return fmt.Sprintf("The hub could not read the bundle from %s: the push did not finish, or staging removed it before the sync. Run grcli publish again.", stagingRepo)
 	case e.Status == http.StatusTooManyRequests || e.Status >= 500:
 		return "Nothing was published; run grcli publish again in a moment."
 	default:

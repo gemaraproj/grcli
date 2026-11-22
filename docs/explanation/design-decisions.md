@@ -81,7 +81,7 @@ served repository. Nobody pushes a served repository. There is no fallback.
 **Why.** Before staging, a publish wrote straight to the served repository,
 so bytes the hub then refused were still pullable. Staging makes "refused"
 mean "never served". Staging is a separate registry store that deletes
-anything older than about 24 hours, so an abandoned publish cleans itself
+old uploads after a while, so an abandoned publish cleans itself
 up.
 
 ## The hub validates the schema; grcli's `validate` is a preview
