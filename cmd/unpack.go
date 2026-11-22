@@ -282,12 +282,17 @@ func pinVerified(ctx context.Context, v *viper.Viper, target oras.ReadOnlyTarget
 }
 
 // dropCachedPrimary removes the primary artifact's cache entry, at the
-// coordinate resolveBundle reads it from. Failure is reported, not fatal.
+// coordinate resolveBundle reads it from, under the same conditions. Failure
+// is reported, not fatal.
 func dropCachedPrimary(v *viper.Viper, diag io.Writer) {
+	host := hostOf(v.GetString(flagURL))
 	ns, id := splitRepository(v.GetString(flagRepository))
+	if !cachingEnabled(v) || host == "" || ns == "" || id == "" {
+		return
+	}
 	c, err := cache.Open()
 	if err == nil {
-		err = c.Delete(hostOf(v.GetString(flagURL)), ns, id, v.GetString(flagVersion))
+		err = c.Delete(host, ns, id, v.GetString(flagVersion))
 	}
 	if err != nil {
 		fmt.Fprintf(diag, "  ! could not drop the cached copy: %v\n", err)

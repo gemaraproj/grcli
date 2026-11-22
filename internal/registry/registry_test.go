@@ -287,4 +287,52 @@ func TestCheckBundle(t *testing.T) {
 		require.NoError(t, CheckBundle(ctx, store, desc.Digest.String(), b))
 		require.True(t, b.Manifest.Empty(), "only a digest-checked bundle config may fill bundle.json")
 	})
+
+	// manifestWith pushes a manifest of hand-built artifact layers, tagged by digest.
+	manifestWith := func(t *testing.T, store *memory.Store, layers ...ocispec.Descriptor) string {
+		t.Helper()
+		config := pushBlob(t, store, bundle.MediaTypeManifest, []byte(`{}`))
+		desc := pushManifest(t, store, ocispec.Manifest{Config: config, Layers: layers})
+		require.NoError(t, store.Tag(ctx, desc, desc.Digest.String()))
+		return desc.Digest.String()
+	}
+	layer := func(t *testing.T, store *memory.Store, name, role string, data []byte) ocispec.Descriptor {
+		t.Helper()
+		l := pushBlob(t, store, bundle.MediaTypeArtifact, data)
+		l.Annotations = map[string]string{ocispec.AnnotationTitle: name}
+		if role != "" {
+			l.Annotations[annotationRole] = role
+		}
+		return l
+	}
+
+	t.Run("two source layers fail", func(t *testing.T) {
+		store := memory.New()
+		d := manifestWith(t, store,
+			layer(t, store, "a.yaml", "", []byte("a")),
+			layer(t, store, "b.yaml", "", []byte("b")))
+		b := &bundle.Bundle{Source: bundle.File{Name: "a.yaml", Data: []byte("a")}}
+		require.ErrorIs(t, CheckBundle(ctx, store, d, b), ErrContentMismatch)
+	})
+
+	t.Run("source the manifest lacks fails", func(t *testing.T) {
+		store := memory.New()
+		d := manifestWith(t, store, layer(t, store, "i.yaml", roleImport, []byte("i")))
+		b := &bundle.Bundle{
+			Source:  bundle.File{Name: "a.yaml", Data: []byte("a")},
+			Imports: []bundle.File{{Name: "i.yaml", Data: []byte("i")}},
+		}
+		require.ErrorIs(t, CheckBundle(ctx, store, d, b), ErrContentMismatch)
+	})
+
+	t.Run("invalid layer digest is not a content mismatch", func(t *testing.T) {
+		store := memory.New()
+		bad := layer(t, store, "a.yaml", "", []byte("a"))
+		bad.Digest = "sha256:short"
+		d := manifestWith(t, store, bad)
+		b := &bundle.Bundle{Source: bundle.File{Name: "a.yaml", Data: []byte("a")}}
+		err := CheckBundle(ctx, store, d, b)
+		require.Error(t, err)
+		require.NotErrorIs(t, err, ErrContentMismatch)
+	})
 }
