@@ -232,8 +232,10 @@ Steps:
 1. Fetch the bundle (cache first, then registry; see
    [cache](formats-and-protocol.md#cache)).
 2. Verify the signature as `verify` does (zero-flag or explicit keyless; key
-   mode is not offered), unless `--no-verify` or `--source`. On failure,
-   nothing is written and the output directory is not created.
+   mode is not offered), unless `--no-verify` or `--source`. Then check the
+   fetched files and `bundle.json` against the verified manifest digest; a
+   mismatch is refused and drops the cached copy. On failure, nothing is
+   written and the output directory is not created.
 3. Write the artifact file and `bundle.json` to `--output`. File names that
    would escape the directory are refused.
 4. With `--with-*`, resolve references (see
