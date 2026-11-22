@@ -74,18 +74,6 @@ func TestVerify_FlagValidation(t *testing.T) {
 			},
 			wantSub: "mutually exclusive",
 		},
-		{
-			// issuer without identity (and no key) is an explicit error:
-			// identity is the keyless trigger; a lone issuer has nothing to
-			// bind to. Identity WITHOUT issuer is NOT here — it
-			// now succeeds by defaulting the issuer (see TestResolveVerifyPolicy_URL).
-			name: "issuer-without-identity",
-			args: []string{
-				"verify", "--url", "https://hub.example", "--repository", "rep", "--version", "t",
-				"--certificate-oidc-issuer", "https://example.com",
-			},
-			wantSub: "--certificate-oidc-issuer requires --certificate-identity",
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -311,6 +299,34 @@ func TestResolveVerifyPolicy_HubLookup(t *testing.T) {
 		// anchored regexp becomes the SAN-regexp pin, issuer stays exact.
 		require.Equal(t, sigverify.IdentityPolicy{SANRegexp: wantRegexp, Issuer: issuer}, policy.identityPolicy())
 		require.Equal(t, "keyless identity from hub record: "+canonical+", issuer "+issuer, policy.modeDescription())
+	})
+
+	t.Run("configured issuer works with the hub identity when it matches", func(t *testing.T) {
+		const issuer = "https://token.actions.githubusercontent.com"
+		const workflowPath = "https://github.com/acme/repo/.github/workflows/publish.yml"
+		srv := hubLookupServer(t, "keyless:"+issuer+"#"+workflowPath, nil)
+		t.Setenv("GRCLI_CERTIFICATE_OIDC_ISSUER", issuer)
+		v := baseViper(srv.URL)
+		v.SetEnvPrefix("GRCLI")
+		v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+		v.AutomaticEnv()
+
+		policy, err := resolveVerifyPolicy(context.Background(), v)
+		require.NoError(t, err)
+		require.Equal(t, issuer, policy.issuer)
+		require.Equal(t, "^"+regexp.QuoteMeta(workflowPath)+"@", policy.identityRegexp, "still the hub's identity")
+		require.Empty(t, policy.identity)
+	})
+
+	t.Run("configured issuer that differs from the hub record is refused", func(t *testing.T) {
+		srv := hubLookupServer(t, "keyless:https://token.actions.githubusercontent.com#https://github.com/acme/repo/.github/workflows/publish.yml", nil)
+		v := baseViper(srv.URL)
+		v.Set(flagCertOIDCIssuer, "https://ghe.example/_services/token")
+
+		_, err := resolveVerifyPolicy(context.Background(), v)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "the hub records issuer https://token.actions.githubusercontent.com")
+		require.Contains(t, err.Error(), "https://ghe.example/_services/token")
 	})
 
 	t.Run("hub record without a signer identity is a clear, actionable error", func(t *testing.T) {

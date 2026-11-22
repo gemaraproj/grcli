@@ -19,6 +19,15 @@ change bumps the minor version.
   own, and a refused sync shows the hub's error code and says whether to
   publish again.
 
+### Fixed
+
+- Setting `certificate-oidc-issuer` in config or `GRCLI_CERTIFICATE_OIDC_ISSUER`
+  no longer breaks zero-flag `verify` and `unpack`. They use the hub's signer
+  identity, and the set issuer must match the issuer the hub recorded.
+- `publish --cosign-key` (or `COSIGN_KEY`) in GitHub Actions is refused
+  instead of silently ignored. Actions publishes sign keyless with the
+  workflow's identity, which is what the hub records and `verify` checks.
+
 ## [0.1.0] - Unreleased
 
 First release of `grcli` under `github.com/gemaraproj/grcli`, published as a

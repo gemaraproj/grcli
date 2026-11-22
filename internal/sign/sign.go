@@ -188,7 +188,8 @@ type Options struct {
 //	--no-sign            → ok (publishing unsigned is an explicit choice)
 //	cosign not on PATH   → error
 //	cosign out of range  → error (too old for the bundle format; see BundleFormatArgs)
-//	GITHUB_ACTIONS=true   → ok if id-token is available, else error
+//	GITHUB_ACTIONS=true   → error if KeyPath is set (see below), else ok if
+//	                        id-token is available, else error
 //	KeyPath != ""        → ok
 //	otherwise            → error (no signing material)
 //
@@ -201,6 +202,12 @@ func Preflight(ctx context.Context, opts Options) error {
 		return nil
 	}
 	switch {
+	case os.Getenv("GITHUB_ACTIONS") == "true" && opts.KeyPath != "":
+		// Refused, not ignored: CI publishes sign keyless so the hub can record
+		// the workflow as the signer, and that is the identity a zero-flag
+		// verify checks. A key-signed CI publish would have no such identity.
+		return errors.New("--cosign-key (or COSIGN_KEY) is set, but GitHub Actions publishes sign keyless with the workflow's identity, " +
+			"which is what the hub records and verify checks; remove --cosign-key / unset COSIGN_KEY for this step, or pass --no-sign")
 	case os.Getenv("GITHUB_ACTIONS") == "true":
 		// Keyless in-process: NO cosign needed — grcli requests the
 		// GHA OIDC token itself and signs via sigstore-go. Requires

@@ -226,7 +226,9 @@ Keys (env form in parentheses):
 - `certificate-oidc-issuer` (`GRCLI_CERTIFICATE_OIDC_ISSUER`) — the OIDC issuer
   `grcli verify` expects for keyless verification. Defaults to
   `https://token.actions.githubusercontent.com`; set it only for GitHub
-  Enterprise, another CI provider, or an OIDC proxy.
+  Enterprise, another CI provider, or an OIDC proxy. Zero-flag `verify` and
+  `unpack` still use the hub's signer identity; a set issuer must match the
+  issuer the hub recorded, or they refuse.
 - `trusted-root` (`GRCLI_TRUSTED_ROOT`) — path to a `trusted_root.json` that
   overrides the embedded Sigstore public-good trust root for keyless `verify`. For air-gapped deployments or a private Sigstore instance only;
   unset, grcli uses its pinned embedded root.
@@ -245,7 +247,7 @@ material depends on where you run (`internal/sign.Preflight`):
 
 | Where | Signing material | cosign on `PATH`? |
 |---|---|---|
-| GitHub Actions (`GITHUB_ACTIONS=true`) | the runner's OIDC token — needs `permissions: id-token: write` | **no** — in-process |
+| GitHub Actions (`GITHUB_ACTIONS=true`) | the runner's OIDC token — needs `permissions: id-token: write`; `--cosign-key` / `COSIGN_KEY` is refused here | **no** — in-process |
 | Anywhere else | `--cosign-key` (or `COSIGN_KEY`) | **yes**, ≥ 2.6.0 |
 | Either, opting out | `--no-sign` | no |
 
