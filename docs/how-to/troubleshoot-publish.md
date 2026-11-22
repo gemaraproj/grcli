@@ -61,7 +61,7 @@ After any refusal nothing was published; you fix the cause and run
 | `422 schema_invalid` | The body fails the Gemara release it declares. | Run `grcli validate` with the same `gemara-version`. |
 | `422 gemara_version_unresolved` | `metadata.gemara-version` is not `MAJOR.MINOR.PATCH`. | Quote a full version, e.g. `"1.6.0"`. |
 | `422 gemara_version_unsupported` | The declared Gemara line is older than the hub's minimum (`1.5`). | Move the artifact to Gemara 1.5 or later. |
-| `fetch_failed` | The hub could not read the staged bundle (the push did not finish, or it is over 24 hours old). | Publish again. |
+| `fetch_failed` | The hub could not read the staged bundle (the push did not finish, or staging removed it before the sync). | Publish again. |
 | `429`, `5xx` | Rate limit or hub fault. The staged upload is kept. | Publish again in a moment. |
 
 ## The publish "worked" but the artifact is not where you expected
